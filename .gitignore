@@ -1,1 +1,6 @@
 .DS_Store
+
+# Chromium checkout: huge (~100 GB), gclient-managed, and fully reproducible
+# from PINNED_CHROMIUM via `gclient sync`. Never commit it. This also covers the
+# build output under mac/src/out.
+/mac/
