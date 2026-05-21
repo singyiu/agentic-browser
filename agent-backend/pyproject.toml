@@ -27,6 +27,7 @@ dev = [
 [project.scripts]
 agent-backend = "agent_backend.runner.__main__:main"
 browser-mcp = "agent_backend.mcp_server.__main__:main"
+guardian = "agent_backend.guardian.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

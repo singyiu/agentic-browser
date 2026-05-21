@@ -16,3 +16,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 *.egg-info/
+agent-backend/data/
+
+# parental-control extension secret (written at launch)
+extension/guardian-config.json
