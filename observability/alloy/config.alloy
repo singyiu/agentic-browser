@@ -48,6 +48,20 @@ loki.process "guardian" {
   }
 }
 
+// ---- Chain 2: raw Chromium process log -> Loki ----
+local.file_match "chromium" {
+  path_targets = [{
+    __path__ = "/host/chrome_debug.log",
+    job      = "chromium",
+  }]
+  sync_period = "15s"
+}
+
+loki.source.file "chromium" {
+  targets    = local.file_match.chromium.targets
+  forward_to = [loki.write.lgtm.receiver]
+}
+
 // ---- Chain 4: scrape the host guardian's Prometheus metrics -> remote_write ----
 prometheus.scrape "guardian" {
   targets = [{

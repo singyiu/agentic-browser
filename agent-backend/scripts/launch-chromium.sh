@@ -18,6 +18,9 @@ PORT="${CHROMIUM_CDP_PORT:-9222}"
 PROFILE="${CHROMIUM_PROFILE:-$BACKEND_ROOT/.chromium-profile}"
 EXT_DIR="$REPO_ROOT/extension"
 GUARDIAN_PORT="${GUARDIAN_PORT:-2947}"
+# Chromium process log, tailed into Loki by the observability stack. Touch it so a
+# Docker bind-mount sees a file (not a directory) even on first launch.
+CHROMIUM_LOG_FILE="${CHROMIUM_LOG_PATH:-$PROFILE/chrome_debug.log}"
 
 if [ ! -x "$CHROME" ]; then
   echo "Built Chromium not found at $CHROME — build it first (../scripts/build.sh)." >&2
@@ -28,12 +31,19 @@ fi
 printf '{"token":"%s","endpoint":"http://127.0.0.1:%s"}\n' \
   "${GUARDIAN_TOKEN:-}" "$GUARDIAN_PORT" >"$EXT_DIR/guardian-config.json"
 
+mkdir -p "$(dirname "$CHROMIUM_LOG_FILE")"
+touch "$CHROMIUM_LOG_FILE"
+
 echo "Launching Chromium (CDP :$PORT) with the parental-control extension"
+echo "Chromium log: $CHROMIUM_LOG_FILE"
 exec "$CHROME" \
   --remote-debugging-port="$PORT" \
   --user-data-dir="$PROFILE" \
   --load-extension="$EXT_DIR" \
   --disable-extensions-except="$EXT_DIR" \
+  --enable-logging \
+  --log-file="$CHROMIUM_LOG_FILE" \
+  --v=0 \
   --no-first-run \
   --no-default-browser-check \
   "$@"
