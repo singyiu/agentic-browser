@@ -151,10 +151,34 @@ def create_app(
             )
         )
 
+    async def dwell(request: Request) -> JSONResponse:
+        if request.headers.get("X-Guardian-Token") != config.token:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        url_key = str(body.get("url_key", "")).strip()
+        dwell_ms = body.get("dwell_ms")
+        if (
+            not url_key
+            or isinstance(dwell_ms, bool)
+            or not isinstance(dwell_ms, (int, float))
+            or dwell_ms < 0
+        ):
+            return JSONResponse(
+                {"error": "url_key and non-negative dwell_ms required"}, status_code=422
+            )
+        host = extract_host(url_key)
+        metrics.record_dwell(host, float(dwell_ms) / 1000.0)
+        event_log.log("dwell", url_key=url_key, host=host, dwell_ms=int(dwell_ms))
+        return JSONResponse({"ok": True})
+
     app = Starlette(
         routes=[
             Route("/health", health),
             Route("/classify", classify, methods=["POST"]),
+            Route("/dwell", dwell, methods=["POST"]),
         ]
     )
     app.state.config = config

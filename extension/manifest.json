@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Agentic Parental Control",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Classifies pages for a 10-year-old and blocks unsuitable content via the local guardian backend.",
   "minimum_chrome_version": "114",
-  "background": { "service_worker": "background.js" },
+  "background": { "service_worker": "background.js", "type": "module" },
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
@@ -19,6 +19,6 @@
       "matches": ["<all_urls>"]
     }
   ],
-  "permissions": ["webNavigation", "tabs", "scripting", "storage", "activeTab"],
+  "permissions": ["webNavigation", "tabs", "scripting", "storage", "activeTab", "alarms"],
   "host_permissions": ["<all_urls>"]
 }

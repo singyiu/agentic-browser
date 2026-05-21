@@ -1,6 +1,15 @@
 // Parental-control service worker: watch navigations, ask the guardian backend to
 // classify the page, and tell the content script to block if unsuitable. Fail-open:
-// any error/timeout leaves the page visible.
+// any error/timeout leaves the page visible. Runs as an ES module (see manifest).
+
+import { getConfig } from "./guardian-client.js";
+import {
+  handleActivated,
+  handleAlarm,
+  handleFocusChanged,
+  handleRemoved,
+  notifyUrlKey,
+} from "./dwell-tracker.js";
 
 const HARD_ALLOW = [
   /^chrome:/,
@@ -13,19 +22,7 @@ const HARD_ALLOW = [
 const HOT_TTL_MS = 5 * 60 * 1000;
 const TIMEOUT_MS = 185000; // wait out the backend classify budget (>= GUARDIAN_CLASSIFY_TIMEOUT)
 
-let CONFIG = null;
 const hotCache = new Map(); // rawUrl -> { verdict, reason, ts }
-
-async function getConfig() {
-  if (CONFIG) return CONFIG;
-  try {
-    const resp = await fetch(chrome.runtime.getURL("guardian-config.json"));
-    CONFIG = await resp.json();
-  } catch (_e) {
-    CONFIG = { token: "", endpoint: "http://127.0.0.1:2947" };
-  }
-  return CONFIG;
-}
 
 function shouldSkip(url) {
   return !url || HARD_ALLOW.some((re) => re.test(url));
@@ -108,6 +105,7 @@ async function captureScreenshot(tabId) {
 async function handleNavigation(tabId, url) {
   if (shouldSkip(url)) return;
   console.log(`[guardian] nav tab=${tabId} url=${url}`);
+  notifyUrlKey(tabId, url); // (re)start dwell timing for the active page
 
   const cached = hotCache.get(url);
   if (cached && Date.now() - cached.ts < HOT_TTL_MS) {
@@ -154,3 +152,10 @@ chrome.webNavigation.onCommitted.addListener((d) => {
 chrome.webNavigation.onHistoryStateUpdated.addListener((d) => {
   if (d.frameId === 0) handleNavigation(d.tabId, d.url);
 });
+
+// Dwell-time tracking: time-on-page per active/focused tab, reported to the backend.
+chrome.tabs.onActivated.addListener((info) => handleActivated(info.tabId));
+chrome.tabs.onRemoved.addListener((tabId) => handleRemoved(tabId));
+chrome.windows.onFocusChanged.addListener((winId) => handleFocusChanged(winId));
+chrome.alarms.create("guardian-dwell-keepalive", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener(handleAlarm);

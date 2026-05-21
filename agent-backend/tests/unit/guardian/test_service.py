@@ -129,3 +129,31 @@ def test_no_escalation_when_screenshot_present() -> None:
         headers=_HEADERS,
     )
     assert resp.json()["verdict"] == "allow"
+
+
+def test_dwell_records_event() -> None:
+    log = FakeLog()
+    resp = _client(FakeClassifier(Verdict("allow")), log=log).post(
+        "/dwell", json={"url_key": "youtube:x", "dwell_ms": 5000}, headers=_HEADERS
+    )
+    assert resp.json()["ok"] is True
+    assert "dwell" in log.events
+
+
+def test_dwell_forbidden_without_token() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).post(
+        "/dwell", json={"url_key": "k", "dwell_ms": 1}
+    )
+    assert resp.status_code == 403
+
+
+def test_dwell_rejects_bad_payload() -> None:
+    client = _client(FakeClassifier(Verdict("allow")))
+    assert (
+        client.post("/dwell", json={"url_key": "", "dwell_ms": 1}, headers=_HEADERS).status_code
+        == 422
+    )
+    assert (
+        client.post("/dwell", json={"url_key": "k", "dwell_ms": -5}, headers=_HEADERS).status_code
+        == 422
+    )
