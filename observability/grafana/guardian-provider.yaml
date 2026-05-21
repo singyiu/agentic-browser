@@ -1,0 +1,9 @@
+apiVersion: 1
+
+# Registers the browser-usage dashboard (JSON mounted at /otel-lgtm/ by docker-compose).
+providers:
+  - name: "Guardian"
+    type: file
+    options:
+      path: /otel-lgtm/guardian-browser-usage.json
+      foldersFromFilesStructure: false

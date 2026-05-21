@@ -21,6 +21,9 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     volumes:
       - lgtm-data:/data
+      # Provisioned browser-usage dashboard.
+      - ./grafana/guardian-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/guardian.yaml:ro
+      - ./grafana/browser-usage-dashboard.json:/otel-lgtm/guardian-browser-usage.json:ro
     restart: unless-stopped
 
   alloy:
