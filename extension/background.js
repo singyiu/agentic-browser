@@ -32,14 +32,42 @@ function shouldSkip(url) {
 }
 
 async function sendToTab(tabId, message, retries = 3) {
+  let lastErr = null;
   for (let i = 0; i < retries; i += 1) {
     try {
       return await chrome.tabs.sendMessage(tabId, message);
-    } catch (_e) {
+    } catch (e) {
+      lastErr = e;
       await new Promise((r) => setTimeout(r, 200));
     }
   }
+  console.warn(
+    `[guardian] sendToTab(${message?.type}) failed for tab ${tabId}:`,
+    lastErr?.message || lastErr,
+  );
   return null;
+}
+
+// Authoritatively block a tab by navigating it to the extension's block page from the
+// background. This does NOT depend on the content script being reachable — the prior
+// content-script-only path (sendToTab -> location.replace) failed silently whenever the
+// script was gone (e.g. YouTube SPA document swaps), leaving the page playing. The
+// content-script fade is fired first as a best-effort visual and is intentionally not awaited.
+async function blockTab(tabId, reason, pageUrl) {
+  sendToTab(tabId, { type: "BLOCK", reason });
+  const params =
+    `?reason=${encodeURIComponent(reason || "")}` +
+    `&url=${encodeURIComponent(pageUrl || "")}`;
+  const blockUrl = chrome.runtime.getURL("block.html") + params;
+  try {
+    await chrome.tabs.update(tabId, { url: blockUrl });
+    console.log(`[guardian] blocked tab ${tabId}: ${pageUrl}`);
+  } catch (e) {
+    console.warn(
+      `[guardian] tabs.update block failed for tab ${tabId}:`,
+      e?.message || e,
+    );
+  }
 }
 
 async function classify(payload) {
@@ -79,11 +107,11 @@ async function captureScreenshot(tabId) {
 
 async function handleNavigation(tabId, url) {
   if (shouldSkip(url)) return;
+  console.log(`[guardian] nav tab=${tabId} url=${url}`);
 
   const cached = hotCache.get(url);
   if (cached && Date.now() - cached.ts < HOT_TTL_MS) {
-    if (cached.verdict === "block")
-      await sendToTab(tabId, { type: "BLOCK", reason: cached.reason });
+    if (cached.verdict === "block") await blockTab(tabId, cached.reason, url);
     return;
   }
 
@@ -112,11 +140,11 @@ async function handleNavigation(tabId, url) {
     reason: result.reason,
     ts: Date.now(),
   });
+  console.log(
+    `[guardian] verdict=${result.verdict} reason=${result.reason || ""} url=${url}`,
+  );
   if (result.verdict === "block") {
-    await sendToTab(tabId, {
-      type: "BLOCK",
-      reason: result.reason || "This page is not suitable.",
-    });
+    await blockTab(tabId, result.reason || "This page is not suitable.", url);
   }
 }
 
