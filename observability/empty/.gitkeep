@@ -1,0 +1,2 @@
+# Placeholder so the empty dir exists. Mounted at /host/claude-transcripts when
+# TRANSCRIPTS_DIR is unset, so transcript ingestion stays off until you opt in.

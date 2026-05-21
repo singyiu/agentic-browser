@@ -38,9 +38,11 @@ services:
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
       - alloy-data:/var/lib/alloy/data
-      # Host log sources (read-only). Transcripts mount is added in Phase 4.
+      # Host log sources (read-only).
       - ${REPO_ROOT:-..}/agent-backend/data:/host/guardian-data:ro
       - ${CHROMIUM_LOG_PATH:-../agent-backend/.chromium-profile/chrome_debug.log}:/host/chrome_debug.log:ro
+      # Claude Code transcripts: empty dir unless TRANSCRIPTS_DIR is set (opt-in, see .env).
+      - ${TRANSCRIPTS_DIR:-./empty}:/host/claude-transcripts:ro
     depends_on:
       - lgtm
     restart: unless-stopped

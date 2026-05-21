@@ -62,6 +62,52 @@ loki.source.file "chromium" {
   forward_to = [loki.write.lgtm.receiver]
 }
 
+// ---- Chain 3: Claude Code transcripts -> Loki (secret-redacted) ----
+// Disabled by default: compose mounts an empty dir at /host/claude-transcripts unless
+// TRANSCRIPTS_DIR is set, so this glob matches nothing until you opt in.
+local.file_match "transcripts" {
+  path_targets = [{
+    __path__ = "/host/claude-transcripts/*.jsonl",
+    job      = "claude_transcript",
+  }]
+  sync_period = "30s"
+}
+
+loki.source.file "transcripts" {
+  targets    = local.file_match.transcripts.targets
+  forward_to = [loki.process.transcripts.receiver]
+}
+
+loki.process "transcripts" {
+  forward_to = [loki.write.lgtm.receiver]
+
+  // Redact secrets before the line reaches Loki. NOTE: stage.replace replaces the CAPTURE
+  // GROUP with `replace` (not the whole match), so each secret is wrapped in a single group.
+  // RE2 in double-quoted strings (backslashes doubled).
+  stage.replace {
+    expression = "(sk-ant-[A-Za-z0-9_\\-]{8,})"
+    replace    = "[REDACTED:anthropic-key]"
+  }
+  stage.replace {
+    expression = "(?i)bearer\\s+([A-Za-z0-9._\\-]+)"
+    replace    = "[REDACTED:bearer]"
+  }
+  stage.replace {
+    expression = "(AKIA[0-9A-Z]{16})"
+    replace    = "[REDACTED:aws-key]"
+  }
+  // GUARDIAN_TOKEN-style long hex (also catches commit hashes/UUIDs — accepted, security-first).
+  stage.replace {
+    expression = "([0-9a-fA-F]{32,64})"
+    replace    = "[REDACTED:hex]"
+  }
+  // Catch-all: redact the value that follows a sensitive key name.
+  stage.replace {
+    expression = "(?i)(?:password|secret|token|credential|api[_-]?key)[\\s:=\"'\\\\]{1,5}([^\\s,}\"]{3,})"
+    replace    = "[REDACTED:kv]"
+  }
+}
+
 // ---- Chain 4: scrape the host guardian's Prometheus metrics -> remote_write ----
 prometheus.scrape "guardian" {
   targets = [{
