@@ -1,0 +1,16 @@
+{
+  "model": "claude-sonnet-4-5",
+  "permissions": {
+    "allow": [
+      "mcp__browser__browser_navigate",
+      "mcp__browser__browser_snapshot",
+      "mcp__browser__browser_click",
+      "mcp__browser__browser_type",
+      "mcp__browser__browser_read",
+      "mcp__browser__browser_wait_for",
+      "mcp__browser__browser_back",
+      "mcp__browser__browser_screenshot"
+    ],
+    "deny": ["Bash", "Write", "Edit", "Read", "WebFetch", "WebSearch", "Task"]
+  }
+}

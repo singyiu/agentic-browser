@@ -16,6 +16,7 @@ committed to this repo.
 - `config/args.gn` — GN build args (RAM-bounded for an 18 GB machine; see below).
 - `scripts/` — sync / apply-patches / setup-gn / build / reset / mem-watch helpers.
 - `mac/` — the Chromium checkout (git-ignored, not part of this repo).
+- `agent-backend/` — Claude-Max agentic browser-control backend (Python; see `agent-backend/README.md`).
 
 ## Workflow
 

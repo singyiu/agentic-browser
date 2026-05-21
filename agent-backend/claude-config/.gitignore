@@ -1,0 +1,7 @@
+# CLAUDE_CONFIG_DIR holds Claude Code's runtime state and credentials. Commit ONLY
+# the curated config below; ignore everything else (sessions, logs, OAuth tokens).
+*
+!.gitignore
+!settings.json
+!.mcp.json
+!CLAUDE.md

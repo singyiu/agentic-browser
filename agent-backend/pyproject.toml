@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-backend"
+version = "0.1.0"
+description = "Claude-Max-backed agentic browser-control backend for the agentic-browser Chromium fork"
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk",
+    "mcp",
+    "playwright",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "ruff>=0.5",
+    "black>=24.0",
+    "mypy>=1.8",
+]
+
+[project.scripts]
+agent-backend = "agent_backend.runner.__main__:main"
+browser-mcp = "agent_backend.mcp_server.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = ["integration: drives a real headless browser (slower)"]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true

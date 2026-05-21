@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "browser": {
+      "command": "python",
+      "args": ["-m", "agent_backend.mcp_server"],
+      "env": {
+        "CHROMIUM_CDP_URL": "http://127.0.0.1:9222"
+      }
+    }
+  }
+}

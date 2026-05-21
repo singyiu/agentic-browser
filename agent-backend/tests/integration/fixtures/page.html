@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Page</title>
+  </head>
+  <body>
+    <h1>Demo Heading</h1>
+    <p>Hello from the fixture page.</p>
+    <a href="#more" id="more-link">More info</a>
+    <label for="q">Search</label>
+    <input id="q" name="q" type="text" />
+    <button id="go" type="button">Go</button>
+    <div id="out"></div>
+    <script>
+      document.getElementById("go").addEventListener("click", function () {
+        document.getElementById("out").textContent =
+          "clicked:" + document.getElementById("q").value;
+      });
+    </script>
+  </body>
+</html>

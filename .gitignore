@@ -4,3 +4,15 @@
 # from PINNED_CHROMIUM via `gclient sync`. Never commit it. This also covers the
 # build output under mac/src/out.
 /mac/
+
+# agent-backend (Python)
+agent-backend/.venv/
+agent-backend/.env
+agent-backend/.chromium-profile/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+*.egg-info/
