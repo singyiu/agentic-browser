@@ -1,0 +1,49 @@
+name: agentic-observability
+
+# Local Grafana LGTM stack (Grafana + Loki + Tempo + Prometheus/Mimir + OTel collector,
+# all in one image) plus Grafana Alloy for scraping host log files and the host guardian's
+# /metrics. The agentic backend itself stays on the host (not containerized); Alloy reaches
+# it via host.docker.internal and read-only bind mounts. Tags are pinned for reproducibility.
+
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.11.6
+    container_name: agentic-lgtm
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"     # Grafana UI
+      - "${OTEL_GRPC_PORT:-4317}:4317"   # OTLP gRPC (future traces)
+      - "${OTEL_HTTP_PORT:-4318}:4318"   # OTLP HTTP
+      - "${PROMETHEUS_PORT:-9090}:9090"  # Prometheus (query + remote_write receiver)
+      - "${LOKI_PORT:-3100}:3100"        # Loki push/query
+      - "${TEMPO_PORT:-3200}:3200"       # Tempo query
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - lgtm-data:/data
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.10.0
+    container_name: agentic-alloy
+    ports:
+      - "${ALLOY_UI_PORT:-12345}:12345"  # Alloy debug UI
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      # Host log sources (read-only). Chromium log + transcripts are added in later phases.
+      - ${REPO_ROOT:-..}/agent-backend/data:/host/guardian-data:ro
+    depends_on:
+      - lgtm
+    restart: unless-stopped
+
+volumes:
+  lgtm-data:
+  alloy-data:

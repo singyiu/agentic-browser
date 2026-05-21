@@ -20,3 +20,6 @@ agent-backend/data/
 
 # parental-control extension secret (written at launch)
 extension/guardian-config.json
+
+# observability stack local config (host paths/ports)
+observability/.env

@@ -1,0 +1,107 @@
+"""Prometheus metrics for the guardian service.
+
+The registry is injectable so tests (and repeated ``create_app`` calls) each get an
+isolated registry instead of colliding on the process-global one. Counter names are
+declared WITHOUT the ``_total`` suffix; prometheus_client appends it on exposition.
+"""
+
+from __future__ import annotations
+
+from prometheus_client import CollectorRegistry, Counter, Histogram, start_http_server
+
+# Allowlist of category labels (the rubric.py taxonomy) plus safe buckets. Any value the
+# classifier emits outside this set is recorded as "unknown" to bound label cardinality.
+CATEGORY_LABELS: frozenset[str] = frozenset(
+    {
+        "adult_content",
+        "graphic_violence",
+        "self_harm",
+        "hate",
+        "illegal_dangerous",
+        "gambling",
+        "alcohol_tobacco_vaping",
+        "harassment",
+        "mature_themes",
+        "scary",
+        "dating",
+        "none",
+        "unknown",
+    }
+)
+
+# Latency buckets (ms) spanning fast paths through the 180 s classify timeout.
+_DURATION_BUCKETS = (50, 100, 250, 500, 1000, 2500, 5000, 15000, 30000, 60000, 120000, 180000)
+
+
+class GuardianMetrics:
+    """Owns a Prometheus registry and the guardian's metric instruments."""
+
+    def __init__(self, registry: CollectorRegistry | None = None) -> None:
+        self.registry = registry if registry is not None else CollectorRegistry()
+        self.classifications = Counter(
+            "guardian_classifications",
+            "Completed classifications by verdict (allow|block|fail_open).",
+            ["verdict"],
+            registry=self.registry,
+        )
+        self.category_hits = Counter(
+            "guardian_category_hits",
+            "Times a content category was matched during classification.",
+            ["category"],
+            registry=self.registry,
+        )
+        self.classification_duration_ms = Histogram(
+            "guardian_classification_duration_ms",
+            "End-to-end classification latency in milliseconds.",
+            buckets=_DURATION_BUCKETS,
+            registry=self.registry,
+        )
+        self.visits = Counter(
+            "guardian_visits",
+            "Page visits by host (eTLD+1).",
+            ["host"],
+            registry=self.registry,
+        )
+        self.dwell_seconds = Counter(
+            "guardian_dwell_seconds",
+            "Accumulated dwell time in seconds by host.",
+            ["host"],
+            registry=self.registry,
+        )
+        self.cache_hits = Counter(
+            "guardian_cache_hits",
+            "Classifications served from cache.",
+            registry=self.registry,
+        )
+
+    def record_classification(
+        self, verdict: str, categories: tuple[str, ...], duration_ms: float, host: str
+    ) -> None:
+        """Record a fresh (non-cached) allow/block classification."""
+        self.classifications.labels(verdict=verdict).inc()
+        self.classification_duration_ms.observe(duration_ms)
+        self.visits.labels(host=host).inc()
+        for category in categories:
+            safe = category if category in CATEGORY_LABELS else "unknown"
+            self.category_hits.labels(category=safe).inc()
+
+    def record_cache_hit(self, host: str) -> None:
+        """Record a verdict served from cache (still counts as a page visit)."""
+        self.cache_hits.inc()
+        self.visits.labels(host=host).inc()
+
+    def record_fail_open(self, host: str) -> None:
+        """Record a fail-open (classify error/timeout); the page was still visited."""
+        self.classifications.labels(verdict="fail_open").inc()
+        self.visits.labels(host=host).inc()
+
+    def record_dwell(self, host: str, seconds: float) -> None:
+        """Add observed time-on-page (seconds) for a host. Negative values are ignored."""
+        if seconds < 0:
+            return
+        self.dwell_seconds.labels(host=host).inc(seconds)
+
+
+def start_metrics_server(metrics: GuardianMetrics, port: int) -> None:  # pragma: no cover
+    """Expose ``metrics`` via an HTTP server in Prometheus exposition format."""
+    start_http_server(port, registry=metrics.registry)

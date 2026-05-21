@@ -43,3 +43,26 @@ def normalize_url(url: str) -> str:
     }
     new_query = urlencode(sorted(cleaned.items()))
     return urlunsplit((parts.scheme.lower(), host, path, new_query, ""))
+
+
+def extract_host(url_key: str) -> str:
+    """Low-cardinality host label for metrics, derived from a normalized ``url_key``.
+
+    ``youtube:<id>`` collapses to ``youtube.com``; otherwise the registered domain
+    (naive eTLD+1) of the URL. Returns ``"unknown"`` when it cannot be derived."""
+    key = (url_key or "").strip()
+    if not key:
+        return "unknown"
+    if key.startswith("youtube:"):
+        return "youtube.com"
+    try:
+        parts = urlsplit(key)
+        host = (parts.netloc or parts.path).lower()
+    except ValueError:
+        return "unknown"
+    host = host.split("/")[0].split(":")[0].removeprefix("www.")
+    if not host:
+        return "unknown"
+    if "." not in host:
+        return host[:64]
+    return ".".join(host.split(".")[-2:])[:64]

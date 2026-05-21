@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent_backend.guardian.normalize import normalize_url
+from agent_backend.guardian.normalize import extract_host, normalize_url
 
 
 def test_youtube_watch() -> None:
@@ -29,3 +29,19 @@ def test_lowercases_scheme_and_host() -> None:
 
 def test_preserves_meaningful_query() -> None:
     assert "q=cats" in normalize_url("https://example.com/s?q=cats")
+
+
+def test_extract_host_youtube() -> None:
+    assert extract_host("youtube:abc123") == "youtube.com"
+
+
+def test_extract_host_from_url_key() -> None:
+    assert extract_host("https://www.example.com/page?q=1") == "example.com"
+
+
+def test_extract_host_drops_subdomain() -> None:
+    assert extract_host("https://news.example.com/x") == "example.com"
+
+
+def test_extract_host_empty_is_unknown() -> None:
+    assert extract_host("") == "unknown"

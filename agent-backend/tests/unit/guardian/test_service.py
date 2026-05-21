@@ -16,6 +16,7 @@ def _config() -> GuardianConfig:
     return GuardianConfig(
         host="127.0.0.1",
         port=2947,
+        metrics_port=2948,
         token="secret",
         cache_path=":memory:",
         event_log_path="/tmp/guardian_test.jsonl",

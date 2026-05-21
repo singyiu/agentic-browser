@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from ..config import ConfigError
 from .config import GuardianConfig
+from .metrics import GuardianMetrics, start_metrics_server
 from .service import create_app
 
 
@@ -27,8 +28,11 @@ def main() -> None:  # pragma: no cover - process entry point
         print(f"Config error: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
-    app = create_app(config)
+    metrics = GuardianMetrics()
+    app = create_app(config, metrics=metrics)
+    start_metrics_server(metrics, config.metrics_port)
     print(f"Guardian listening on http://{config.host}:{config.port} (model: {config.model})")
+    print(f"Prometheus metrics on http://127.0.0.1:{config.metrics_port}/metrics")
     uvicorn.run(app, host=config.host, port=config.port, log_level="warning")
 
 

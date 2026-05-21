@@ -15,6 +15,7 @@ def _config(tmp_path: Path) -> GuardianConfig:
     return GuardianConfig(
         host="127.0.0.1",
         port=2947,
+        metrics_port=2948,
         token="s",
         cache_path=str(tmp_path / "c.db"),
         event_log_path=str(tmp_path / "e.jsonl"),

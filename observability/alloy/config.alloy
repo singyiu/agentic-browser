@@ -1,0 +1,59 @@
+// Grafana Alloy config for the agentic-browser observability stack.
+// Logs: tail host files -> Loki. Metrics: scrape the host guardian -> Prometheus (in lgtm).
+// Phases 2 (chromium) and 4 (transcripts) add their pipelines below.
+
+// ---- Sinks (the all-in-one lgtm container, reached by compose service name) ----
+loki.write "lgtm" {
+  endpoint {
+    url = "http://lgtm:3100/loki/api/v1/push"
+  }
+}
+
+prometheus.remote_write "lgtm" {
+  endpoint {
+    url = "http://lgtm:9090/api/v1/write"
+  }
+}
+
+// ---- Chain 1: guardian classification events (JSONL) -> Loki ----
+local.file_match "guardian" {
+  path_targets = [{
+    __path__ = "/host/guardian-data/guardian_events.jsonl",
+    job      = "guardian",
+  }]
+  sync_period = "10s"
+}
+
+loki.source.file "guardian" {
+  targets    = local.file_match.guardian.targets
+  forward_to = [loki.process.guardian.receiver]
+}
+
+loki.process "guardian" {
+  forward_to = [loki.write.lgtm.receiver]
+
+  // Parse the JSONL envelope and promote low-cardinality fields to stream labels.
+  // url_key / reason / confidence stay in the log body (query with | json).
+  stage.json {
+    expressions = {
+      event   = "event",
+      verdict = "verdict",
+    }
+  }
+  stage.labels {
+    values = {
+      event   = "event",
+      verdict = "verdict",
+    }
+  }
+}
+
+// ---- Chain 4: scrape the host guardian's Prometheus metrics -> remote_write ----
+prometheus.scrape "guardian" {
+  targets = [{
+    __address__ = "host.docker.internal:2948",
+  }]
+  scrape_interval = "15s"
+  metrics_path    = "/metrics"
+  forward_to      = [prometheus.remote_write.lgtm.receiver]
+}

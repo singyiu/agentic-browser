@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from agent_backend.config import ConfigError
-from agent_backend.guardian.config import DEFAULT_MODEL, DEFAULT_PORT, GuardianConfig
+from agent_backend.guardian.config import (
+    DEFAULT_METRICS_PORT,
+    DEFAULT_MODEL,
+    DEFAULT_PORT,
+    GuardianConfig,
+)
 
 
 def _env(**over: str) -> dict[str, str]:
@@ -44,6 +49,7 @@ def test_defaults() -> None:
     assert cfg.model == DEFAULT_MODEL
     assert cfg.enable_vision is False
     assert cfg.classify_timeout_s == 180.0
+    assert cfg.metrics_port == DEFAULT_METRICS_PORT
 
 
 def test_overrides() -> None:

@@ -10,6 +10,7 @@ from ..config import ConfigError
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 2947
+DEFAULT_METRICS_PORT = 2948
 DEFAULT_MODEL = "claude-haiku-4-5"  # fast + cheap for per-page classification
 DEFAULT_TIMEOUT_S = 180.0  # a classification spawns a `claude` subprocess; give it room
 DEFAULT_SCREENSHOT_THRESHOLD = 0.6
@@ -25,6 +26,7 @@ def _clean(value: str | None) -> str:
 class GuardianConfig:
     host: str
     port: int
+    metrics_port: int
     token: str
     cache_path: str
     event_log_path: str
@@ -55,9 +57,13 @@ class GuardianConfig:
         config_dir = _clean(e.get("CLAUDE_CONFIG_DIR"))
         if not config_dir:
             raise ConfigError("CLAUDE_CONFIG_DIR is not set (use scripts/launch-guardian.sh).")
+        metrics_port = int(_clean(e.get("GUARDIAN_METRICS_PORT")) or DEFAULT_METRICS_PORT)
+        if not 1024 <= metrics_port <= 65535:
+            raise ConfigError("GUARDIAN_METRICS_PORT must be between 1024 and 65535.")
         return cls(
             host=_clean(e.get("GUARDIAN_HOST")) or DEFAULT_HOST,
             port=int(_clean(e.get("GUARDIAN_PORT")) or DEFAULT_PORT),
+            metrics_port=metrics_port,
             token=token,
             cache_path=_clean(e.get("GUARDIAN_CACHE_PATH")) or DEFAULT_CACHE_PATH,
             event_log_path=_clean(e.get("GUARDIAN_EVENT_LOG_PATH")) or DEFAULT_EVENT_LOG_PATH,
