@@ -64,6 +64,13 @@ def test_record_dwell_ignores_negative() -> None:
     assert _val(m, "guardian_dwell_seconds_total", {"host": "example.com"}) is None
 
 
+def test_record_whitelist_hit_counts_hit_and_visit() -> None:
+    m = _metrics()
+    m.record_whitelist_hit("youtube.com")
+    assert _val(m, "guardian_whitelist_hits_total", {"host": "youtube.com"}) == 1.0
+    assert _val(m, "guardian_visits_total", {"host": "youtube.com"}) == 1.0
+
+
 def test_registries_are_isolated() -> None:
     m1, m2 = _metrics(), _metrics()
     m1.record_cache_hit("a.com")

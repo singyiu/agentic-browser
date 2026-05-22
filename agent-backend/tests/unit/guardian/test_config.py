@@ -9,6 +9,7 @@ from agent_backend.guardian.config import (
     DEFAULT_METRICS_PORT,
     DEFAULT_MODEL,
     DEFAULT_PORT,
+    DEFAULT_WHITELIST_PATH,
     GuardianConfig,
 )
 
@@ -50,6 +51,7 @@ def test_defaults() -> None:
     assert cfg.enable_vision is False
     assert cfg.classify_timeout_s == 180.0
     assert cfg.metrics_port == DEFAULT_METRICS_PORT
+    assert cfg.whitelist_path == DEFAULT_WHITELIST_PATH
 
 
 def test_overrides() -> None:
@@ -61,3 +63,8 @@ def test_overrides() -> None:
     assert cfg.port == 9000
     assert cfg.model == "claude-sonnet-4-5"
     assert cfg.enable_vision is True
+
+
+def test_whitelist_path_override() -> None:
+    cfg = GuardianConfig.from_env(_env(GUARDIAN_WHITELIST_PATH="/tmp/wl.json"))
+    assert cfg.whitelist_path == "/tmp/wl.json"

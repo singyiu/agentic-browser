@@ -69,6 +69,12 @@ class VerdictCache:
             )
             self._conn.commit()
 
+    def clear(self) -> None:
+        """Drop all cached verdicts (used when the whitelist changes)."""
+        with self._lock:
+            self._conn.execute("DELETE FROM verdicts")
+            self._conn.commit()
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

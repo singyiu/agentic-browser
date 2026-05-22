@@ -57,6 +57,42 @@ pytest --cov=agent_backend --cov-report=term-missing
 ruff check src tests && black --check src tests && mypy src
 ```
 
+## Parental whitelist (guardian)
+
+The guardian pre-approves content via `data/guardian_whitelist.json` (a JSON array of
+strings; override the path with `GUARDIAN_WHITELIST_PATH`). Each entry's behavior is
+auto-detected from its shape:
+
+| Entry | Type | Effect |
+|-------|------|--------|
+| `www.youtube.com` | exact URL | that page is allowed instantly (classifier skipped) |
+| `www.youtube.com/results*` | wildcard URL (`*`) | matching pages allowed instantly |
+| `BeyBlade anime` | content (natural language) | the classifier is told the topic is parent-approved |
+
+- **URL rules are authoritative**: a match returns `allow` *before* the cache and without an
+  LLM call. `*` placement controls breadth — `youtube.com*` allows the whole site (incl.
+  videos), `youtube.com/*` allows sub-paths only, `www.youtube.com` allows just that page.
+- **Content rules are best-effort**: they steer the model toward `allow`, but the
+  always-block categories (adult, graphic violence, self-harm, hate, illegal/dangerous)
+  still block.
+- A missing/invalid file means an empty whitelist — everything is classified normally
+  (fails safe). Edits take effect on the next request and clear stale cached verdicts.
+
+Worked example — let a kid browse/search YouTube while videos stay classified:
+add `www.youtube.com` **and** `www.youtube.com/results*`; individual `…/watch?v=…` pages
+match no rule, so they are still classified (and a `BeyBlade anime` content entry then lets
+the matching videos through).
+
+Manage it over HTTP (token-authed, like `/classify`; `$TOKEN` = `GUARDIAN_TOKEN`):
+
+```sh
+curl -s -H "X-Guardian-Token: $TOKEN" http://127.0.0.1:2947/whitelist            # list
+curl -s -X POST -H "X-Guardian-Token: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"entry":"www.youtube.com"}' http://127.0.0.1:2947/whitelist               # add
+curl -s -X DELETE -H "X-Guardian-Token: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"entry":"www.youtube.com"}' http://127.0.0.1:2947/whitelist               # remove
+```
+
 ## MCP tools
 
 `browser_navigate`, `browser_snapshot` (accessibility tree), `browser_click`,

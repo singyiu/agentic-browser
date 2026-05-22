@@ -58,9 +58,11 @@ PromQL:
 - Top domains: `topk(10, sum by (host) (rate(guardian_visits_total[1h])))`
 - Dwell by host: `topk(10, sum by (host) (rate(guardian_dwell_seconds_total[1h])))`
 - Cache hit ratio: `sum(rate(guardian_cache_hits_total[1h])) / sum(rate(guardian_visits_total[1h]))`
+- Whitelist allows by host: `topk(10, sum by (host) (rate(guardian_whitelist_hits_total[1h])))`
 
 LogQL:
 - Blocks: `{job="guardian", event="block"} | json`
+- Whitelist allows: `{job="guardian", event="whitelist_allow"} | json`
 - Errors in Chromium: `{job="chromium"} |~ "(?i)error"`
 
 ## Gotchas

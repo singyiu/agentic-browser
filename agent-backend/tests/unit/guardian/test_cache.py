@@ -38,3 +38,12 @@ def test_upsert(tmp_path: Path) -> None:
     entry = cache.get("k")
     assert entry is not None
     assert entry.verdict == "block"
+
+
+def test_clear_empties_cache(tmp_path: Path) -> None:
+    cache = VerdictCache(str(tmp_path / "c.db"))
+    cache.put("a", "block", "bad", 0.9)
+    cache.put("b", "allow", "", 0.5)
+    cache.clear()
+    assert cache.get("a") is None
+    assert cache.get("b") is None

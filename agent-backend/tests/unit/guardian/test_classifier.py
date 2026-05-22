@@ -19,6 +19,7 @@ def _config(tmp_path: Path) -> GuardianConfig:
         token="s",
         cache_path=str(tmp_path / "c.db"),
         event_log_path=str(tmp_path / "e.jsonl"),
+        whitelist_path=str(tmp_path / "wl.json"),
         classify_timeout_s=5.0,
         screenshot_confidence_threshold=0.6,
         enable_vision=False,
@@ -77,3 +78,32 @@ def test_build_prompt_truncates_body(tmp_path: Path) -> None:
     classifier = Classifier(_config(tmp_path), query_fn=lambda **_: None)
     prompt = classifier.build_prompt({"url": "u", "body_snippet": "x" * 5000})
     assert len(prompt) < 2300
+
+
+async def test_approved_topics_injected_into_system_prompt(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_query(*, prompt: str, options: object) -> AsyncIterator[object]:
+        captured["system_prompt"] = options.system_prompt  # type: ignore[attr-defined]
+        yield _result(structured={"verdict": "allow", "confidence": 0.9})
+
+    await Classifier(_config(tmp_path), query_fn=fake_query).classify(
+        {"url": "u"}, approved_topics=("BeyBlade anime",)
+    )
+    system_prompt = captured["system_prompt"]
+    assert isinstance(system_prompt, str)
+    assert "PARENT-APPROVED" in system_prompt
+    assert "BeyBlade anime" in system_prompt
+
+
+async def test_no_approved_topics_omits_block(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_query(*, prompt: str, options: object) -> AsyncIterator[object]:
+        captured["system_prompt"] = options.system_prompt  # type: ignore[attr-defined]
+        yield _result(structured={"verdict": "allow", "confidence": 0.9})
+
+    await Classifier(_config(tmp_path), query_fn=fake_query).classify({"url": "u"})
+    system_prompt = captured["system_prompt"]
+    assert isinstance(system_prompt, str)
+    assert "PARENT-APPROVED" not in system_prompt

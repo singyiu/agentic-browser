@@ -73,6 +73,12 @@ class GuardianMetrics:
             "Classifications served from cache.",
             registry=self.registry,
         )
+        self.whitelist_hits = Counter(
+            "guardian_whitelist_hits",
+            "Page visits allowed by a whitelist URL rule (classifier skipped), by host.",
+            ["host"],
+            registry=self.registry,
+        )
 
     def record_classification(
         self, verdict: str, categories: tuple[str, ...], duration_ms: float, host: str
@@ -93,6 +99,11 @@ class GuardianMetrics:
     def record_fail_open(self, host: str) -> None:
         """Record a fail-open (classify error/timeout); the page was still visited."""
         self.classifications.labels(verdict="fail_open").inc()
+        self.visits.labels(host=host).inc()
+
+    def record_whitelist_hit(self, host: str) -> None:
+        """Record a page allowed by a whitelist URL rule (still counts as a visit)."""
+        self.whitelist_hits.labels(host=host).inc()
         self.visits.labels(host=host).inc()
 
     def record_dwell(self, host: str, seconds: float) -> None:

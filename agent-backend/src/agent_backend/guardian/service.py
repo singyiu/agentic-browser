@@ -18,6 +18,7 @@ from .event_log import EventLog
 from .metrics import GuardianMetrics
 from .normalize import extract_host, normalize_url
 from .verdict import Verdict
+from .whitelist import WhitelistStore, classify_entry
 
 
 def _ms(start: float) -> int:
@@ -51,6 +52,7 @@ def create_app(
     cache: VerdictCache | None = None,
     event_log: EventLog | None = None,
     metrics: GuardianMetrics | None = None,
+    whitelist: WhitelistStore | None = None,
 ) -> Starlette:
     """Build the guardian app. Dependencies may be injected for testing."""
     config = config or GuardianConfig.from_env()
@@ -58,6 +60,7 @@ def create_app(
     cache = cache or VerdictCache(config.cache_path)
     event_log = event_log or EventLog(config.event_log_path)
     metrics = metrics or GuardianMetrics()
+    whitelist = whitelist or WhitelistStore(config.whitelist_path)
 
     async def health(_request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
@@ -78,6 +81,17 @@ def create_app(
         start = time.monotonic()
         loop = asyncio.get_running_loop()
 
+        # Hot-reload the whitelist; a change invalidates cached verdicts.
+        if await loop.run_in_executor(None, whitelist.reload_if_changed):
+            await loop.run_in_executor(None, cache.clear)
+        active = whitelist.current()
+
+        # Hard URL allow: authoritative, checked before the cache, classifier skipped.
+        if active.matches_url(url):
+            event_log.log("whitelist_allow", url=url, url_key=url_key)
+            metrics.record_whitelist_hit(host)
+            return JSONResponse(_response("allow", "whitelisted", 1.0, [], url_key, False, 0))
+
         cached = await loop.run_in_executor(None, cache.get, url_key)
         if cached is not None:
             event_log.log("cache_hit", url=url, url_key=url_key, verdict=cached.verdict)
@@ -88,7 +102,9 @@ def create_app(
 
         try:
             verdict: Verdict = await asyncio.wait_for(
-                classifier.classify(body, screenshot_b64=screenshot),
+                classifier.classify(
+                    body, screenshot_b64=screenshot, approved_topics=active.content_entries
+                ),
                 timeout=config.classify_timeout_s,
             )
         except Exception as exc:  # noqa: BLE001 - fail-open on timeout or any error
@@ -174,11 +190,45 @@ def create_app(
         event_log.log("dwell", url_key=url_key, host=host, dwell_ms=int(dwell_ms))
         return JSONResponse({"ok": True})
 
+    async def whitelist_endpoint(request: Request) -> JSONResponse:
+        if request.headers.get("X-Guardian-Token") != config.token:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        if request.method == "GET":
+            entries = [
+                {"value": value, "type": classify_entry(value)}
+                for value in whitelist.current().values
+            ]
+            return JSONResponse({"entries": entries})
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        entry = str(body.get("entry", "")).strip()
+        if not entry or len(entry) > 512 or not entry.isprintable():
+            return JSONResponse(
+                {"error": "entry must be a non-empty, single-line string (max 512 chars)"},
+                status_code=422,
+            )
+        loop = asyncio.get_running_loop()
+        try:
+            if request.method == "POST":
+                await loop.run_in_executor(None, whitelist.add, entry)
+            else:  # DELETE
+                await loop.run_in_executor(None, whitelist.remove, entry)
+            await loop.run_in_executor(None, cache.clear)  # a whitelist change invalidates verdicts
+        except OSError:
+            return JSONResponse({"error": "whitelist write failed"}, status_code=500)
+        event_log.log(f"whitelist_{request.method.lower()}", entry=entry)
+        if request.method == "POST":
+            return JSONResponse({"value": entry, "type": classify_entry(entry)})
+        return JSONResponse({"ok": True})
+
     app = Starlette(
         routes=[
             Route("/health", health),
             Route("/classify", classify, methods=["POST"]),
             Route("/dwell", dwell, methods=["POST"]),
+            Route("/whitelist", whitelist_endpoint, methods=["GET", "POST", "DELETE"]),
         ]
     )
     app.state.config = config
