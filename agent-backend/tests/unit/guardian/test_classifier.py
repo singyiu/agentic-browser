@@ -20,6 +20,8 @@ def _config(tmp_path: Path) -> GuardianConfig:
         cache_path=str(tmp_path / "c.db"),
         event_log_path=str(tmp_path / "e.jsonl"),
         whitelist_path=str(tmp_path / "wl.json"),
+        requests_path=str(tmp_path / "req.json"),
+        parent_pin="testpin",
         classify_timeout_s=5.0,
         screenshot_confidence_threshold=0.6,
         enable_vision=False,

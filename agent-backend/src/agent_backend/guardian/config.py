@@ -17,6 +17,7 @@ DEFAULT_SCREENSHOT_THRESHOLD = 0.6
 DEFAULT_CACHE_PATH = "data/guardian_cache.db"
 DEFAULT_EVENT_LOG_PATH = "data/guardian_events.jsonl"
 DEFAULT_WHITELIST_PATH = "data/guardian_whitelist.json"
+DEFAULT_REQUESTS_PATH = "data/guardian_requests.json"
 
 
 def _clean(value: str | None) -> str:
@@ -32,6 +33,8 @@ class GuardianConfig:
     cache_path: str
     event_log_path: str
     whitelist_path: str
+    requests_path: str
+    parent_pin: str
     classify_timeout_s: float
     screenshot_confidence_threshold: float
     enable_vision: bool
@@ -70,6 +73,8 @@ class GuardianConfig:
             cache_path=_clean(e.get("GUARDIAN_CACHE_PATH")) or DEFAULT_CACHE_PATH,
             event_log_path=_clean(e.get("GUARDIAN_EVENT_LOG_PATH")) or DEFAULT_EVENT_LOG_PATH,
             whitelist_path=_clean(e.get("GUARDIAN_WHITELIST_PATH")) or DEFAULT_WHITELIST_PATH,
+            requests_path=_clean(e.get("GUARDIAN_REQUESTS_PATH")) or DEFAULT_REQUESTS_PATH,
+            parent_pin=_clean(e.get("GUARDIAN_PARENT_PIN")),
             classify_timeout_s=float(
                 _clean(e.get("GUARDIAN_CLASSIFY_TIMEOUT")) or DEFAULT_TIMEOUT_S
             ),

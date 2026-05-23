@@ -71,6 +71,21 @@ def test_record_whitelist_hit_counts_hit_and_visit() -> None:
     assert _val(m, "guardian_visits_total", {"host": "youtube.com"}) == 1.0
 
 
+def test_record_access_request_counts_by_host() -> None:
+    m = _metrics()
+    m.record_access_request("example.com")
+    m.record_access_request("example.com")
+    assert _val(m, "guardian_access_requests_total", {"host": "example.com"}) == 2.0
+
+
+def test_record_access_decision_counts_by_decision() -> None:
+    m = _metrics()
+    m.record_access_decision("approve")
+    m.record_access_decision("reject")
+    assert _val(m, "guardian_access_decisions_total", {"decision": "approve"}) == 1.0
+    assert _val(m, "guardian_access_decisions_total", {"decision": "reject"}) == 1.0
+
+
 def test_registries_are_isolated() -> None:
     m1, m2 = _metrics(), _metrics()
     m1.record_cache_hit("a.com")

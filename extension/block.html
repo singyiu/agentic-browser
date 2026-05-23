@@ -13,6 +13,17 @@
       <p id="reason">This page may not be suitable.</p>
       <p class="url" id="url"></p>
       <button id="back" type="button">← Go back</button>
+      <div id="request-section">
+        <textarea
+          id="note"
+          rows="2"
+          maxlength="500"
+          placeholder="Optional: tell your parent why (e.g. it's for homework)"
+        ></textarea>
+        <button id="request-btn" type="button">Request access</button>
+        <button id="check-btn" type="button" hidden>Check if approved</button>
+        <p id="request-status"></p>
+      </div>
     </main>
     <script src="block.js"></script>
   </body>

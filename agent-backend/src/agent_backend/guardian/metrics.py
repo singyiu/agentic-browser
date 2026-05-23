@@ -79,6 +79,18 @@ class GuardianMetrics:
             ["host"],
             registry=self.registry,
         )
+        self.access_requests = Counter(
+            "guardian_access_requests",
+            "Access requests submitted by the teen from a block page, by host.",
+            ["host"],
+            registry=self.registry,
+        )
+        self.access_decisions = Counter(
+            "guardian_access_decisions",
+            "Parent decisions on access requests, by decision (approve|reject).",
+            ["decision"],
+            registry=self.registry,
+        )
 
     def record_classification(
         self, verdict: str, categories: tuple[str, ...], duration_ms: float, host: str
@@ -111,6 +123,14 @@ class GuardianMetrics:
         if seconds < 0:
             return
         self.dwell_seconds.labels(host=host).inc(seconds)
+
+    def record_access_request(self, host: str) -> None:
+        """Record a teen access request submitted from a block page."""
+        self.access_requests.labels(host=host).inc()
+
+    def record_access_decision(self, decision: str) -> None:
+        """Record a parent decision (approve|reject) on an access request."""
+        self.access_decisions.labels(decision=decision).inc()
 
 
 def start_metrics_server(metrics: GuardianMetrics, port: int) -> None:  # pragma: no cover

@@ -9,6 +9,7 @@ from agent_backend.guardian.config import (
     DEFAULT_METRICS_PORT,
     DEFAULT_MODEL,
     DEFAULT_PORT,
+    DEFAULT_REQUESTS_PATH,
     DEFAULT_WHITELIST_PATH,
     GuardianConfig,
 )
@@ -52,6 +53,8 @@ def test_defaults() -> None:
     assert cfg.classify_timeout_s == 180.0
     assert cfg.metrics_port == DEFAULT_METRICS_PORT
     assert cfg.whitelist_path == DEFAULT_WHITELIST_PATH
+    assert cfg.requests_path == DEFAULT_REQUESTS_PATH
+    assert cfg.parent_pin == ""  # review feature disabled until a PIN is set
 
 
 def test_overrides() -> None:
@@ -68,3 +71,13 @@ def test_overrides() -> None:
 def test_whitelist_path_override() -> None:
     cfg = GuardianConfig.from_env(_env(GUARDIAN_WHITELIST_PATH="/tmp/wl.json"))
     assert cfg.whitelist_path == "/tmp/wl.json"
+
+
+def test_requests_path_override() -> None:
+    cfg = GuardianConfig.from_env(_env(GUARDIAN_REQUESTS_PATH="/tmp/req.json"))
+    assert cfg.requests_path == "/tmp/req.json"
+
+
+def test_parent_pin_set() -> None:
+    cfg = GuardianConfig.from_env(_env(GUARDIAN_PARENT_PIN="1234"))
+    assert cfg.parent_pin == "1234"

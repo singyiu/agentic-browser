@@ -93,6 +93,42 @@ curl -s -X DELETE -H "X-Guardian-Token: $TOKEN" -H 'Content-Type: application/js
   -d '{"entry":"www.youtube.com"}' http://127.0.0.1:2947/whitelist               # remove
 ```
 
+## Request access (guardian)
+
+When a page is blocked, the kid can ask for it from the block page (a **Request access**
+button with an optional note). The parent reviews the request and approves or rejects it;
+**approving adds the chosen entry to the whitelist**, so the page then follows the whitelist
+rules above.
+
+- **Parent review UI:** open `http://127.0.0.1:2947/review` in any browser and enter
+  `GUARDIAN_PARENT_PIN`. Pending requests show the URL, why it was blocked, the kid's note,
+  and an **editable "allow" field pre-filled with the URL** — broaden it to a section
+  (`youtube.com/results*`) or a topic (`BeyBlade anime`) before approving, or reject with an
+  optional note.
+- **The kid gets unblocked** by tapping **Check if approved** on the block page; once
+  approved it reopens the page (the backend allows it immediately and the extension's cached
+  block is evicted).
+- **Security:** `GUARDIAN_PARENT_PIN` lives only in `.env` and is **never** written into
+  `extension/guardian-config.json`. The kid's browser holds `GUARDIAN_TOKEN` and can reach
+  `127.0.0.1:2947`, so submitting/checking a request uses the token, but **approval requires
+  the PIN the kid's browser never receives**. With no PIN set, the review endpoints return
+  `503` (feature disabled). Requests are stored in `data/guardian_requests.json` (gitignored).
+
+```sh
+# Kid side (token): submit a request, then poll its status.
+curl -s -X POST -H "X-Guardian-Token: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.youtube.com/watch?v=abc","note":"for homework"}' \
+  http://127.0.0.1:2947/access-request
+curl -s -H "X-Guardian-Token: $TOKEN" \
+  "http://127.0.0.1:2947/access-request?url=https://www.youtube.com/watch?v=abc"
+
+# Parent side (PIN = GUARDIAN_PARENT_PIN): list pending, then approve/reject.
+curl -s -H "X-Guardian-Parent-Pin: $PIN" http://127.0.0.1:2947/review/requests
+curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/json' \
+  -d '{"id":"req_…","decision":"approve","whitelist_entry":"BeyBlade anime"}' \
+  http://127.0.0.1:2947/review/decision
+```
+
 ## MCP tools
 
 `browser_navigate`, `browser_snapshot` (accessibility tree), `browser_click`,

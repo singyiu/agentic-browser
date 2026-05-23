@@ -50,3 +50,34 @@ button {
 button:hover {
   background: #a6c6ff;
 }
+#request-section {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+#note {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: #e7e9f0;
+  background: #0c1020;
+  border: 1px solid #2a3357;
+  border-radius: 8px;
+  resize: vertical;
+}
+#note:focus {
+  outline: 2px solid #8ab4ff;
+  border-color: #8ab4ff;
+}
+#request-section button {
+  margin-top: 0;
+}
+#request-status {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: #b9c0d6;
+  min-height: 1.2em;
+}

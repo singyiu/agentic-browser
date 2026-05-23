@@ -153,6 +153,27 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((d) => {
   if (d.frameId === 0) handleNavigation(d.tabId, d.url);
 });
 
+// The block page asks us to evict a cached verdict after a parent approves a request, so the
+// next navigation re-classifies (and the backend now allows the freshly whitelisted URL)
+// instead of being re-blocked by the stale 5-minute hot cache.
+const BLOCK_PAGE_URL = chrome.runtime.getURL("block.html");
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "CLEAR_HOTCACHE") {
+    // Only honor this from our own block page — not from content scripts running in web
+    // pages (which could otherwise evict a verdict to fish for a fail-open).
+    if (
+      sender.id !== chrome.runtime.id ||
+      !sender.url?.startsWith(BLOCK_PAGE_URL)
+    ) {
+      sendResponse({ ok: false });
+      return false;
+    }
+    hotCache.delete(message.url);
+    sendResponse({ ok: true });
+  }
+  return false; // synchronous response
+});
+
 // Dwell-time tracking: time-on-page per active/focused tab, reported to the backend.
 chrome.tabs.onActivated.addListener((info) => handleActivated(info.tabId));
 chrome.tabs.onRemoved.addListener((tabId) => handleRemoved(tabId));
