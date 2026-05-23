@@ -24,13 +24,16 @@ runner (Agent SDK, query())  ──spawns──▶  browser-control MCP server (
 
 ```sh
 cd agent-backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e '.[dev]'
-playwright install chromium          # for the integration tests
+uv sync                              # creates .venv + installs deps (runtime + dev) from uv.lock
+uv run playwright install chromium   # for the integration tests
 
 claude setup-token                   # uses your Claude Max subscription
 cp .env.example .env                 # paste the token into CLAUDE_CODE_OAUTH_TOKEN
 ```
+
+> Uses [uv](https://docs.astral.sh/uv/) (`brew install uv`); `uv.lock` pins every dependency for
+> reproducible installs. Without uv: `python3 -m venv .venv && source .venv/bin/activate && pip
+> install -e . --group dev`.
 
 > Do **not** set `ANTHROPIC_API_KEY` — it overrides the subscription and bills per-token.
 > The runner refuses to start if it is set.
@@ -51,10 +54,10 @@ inside this folder and never touches your personal `~/.claude`.
 ## Test
 
 ```sh
-pytest                 # unit + integration (integration launches its own headless Chromium)
-pytest -m "not integration"   # unit only (fast)
-pytest --cov=agent_backend --cov-report=term-missing
-ruff check src tests && black --check src tests && mypy src
+uv run pytest                 # unit + integration (integration launches its own headless Chromium)
+uv run pytest -m "not integration"   # unit only (fast)
+uv run pytest --cov=agent_backend --cov-report=term-missing
+uv run ruff check src tests && uv run black --check src tests && uv run mypy src
 ```
 
 ## Parental whitelist (guardian)

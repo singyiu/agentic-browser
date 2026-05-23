@@ -11,7 +11,7 @@ export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$BACKEND_ROOT/claude-config}"
 PY="$BACKEND_ROOT/.venv/bin/python"
 
 if [ ! -x "$PY" ]; then
-  echo "venv not found. Run: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'" >&2
+  echo "venv not found. Run: uv sync" >&2
   exit 1
 fi
 
