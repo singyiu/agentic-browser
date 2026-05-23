@@ -28,13 +28,17 @@ if [ ! -x "$CHROME" ]; then
 fi
 
 # Hand the extension the backend token + endpoint (this file is git-ignored).
-printf '{"token":"%s","endpoint":"http://127.0.0.1:%s"}\n' \
-  "${GUARDIAN_TOKEN:-}" "$GUARDIAN_PORT" >"$EXT_DIR/guardian-config.json"
+# GUARDIAN_ENDPOINT lets this (browser) machine point at a guardian running on another
+# LAN host; the default is localhost, so a single-machine setup is unchanged.
+ENDPOINT="${GUARDIAN_ENDPOINT:-http://127.0.0.1:${GUARDIAN_PORT}}"
+printf '{"token":"%s","endpoint":"%s"}\n' \
+  "${GUARDIAN_TOKEN:-}" "$ENDPOINT" >"$EXT_DIR/guardian-config.json"
 
 mkdir -p "$(dirname "$CHROMIUM_LOG_FILE")"
 touch "$CHROMIUM_LOG_FILE"
 
 echo "Launching Chromium (CDP :$PORT) with the parental-control extension"
+echo "Guardian endpoint: $ENDPOINT"
 echo "Chromium log: $CHROMIUM_LOG_FILE"
 exec "$CHROME" \
   --remote-debugging-port="$PORT" \

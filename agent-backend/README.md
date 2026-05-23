@@ -129,6 +129,47 @@ curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/j
   http://127.0.0.1:2947/review/decision
 ```
 
+## Running the browser and guardian on different computers (LAN)
+
+By default everything runs on one machine (`localhost`). You can instead run the **guardian on the
+parent's computer** and **Chromium + the extension on the kid's computer** on the same LAN — so the
+classifier, `/review`, the whitelist, and the parent PIN all live on the parent's machine, out of
+the kid's reach. Only the extension→guardian HTTP crosses the network (the browser-automation CDP
+stays on the browser machine and is not exposed).
+
+**On the parent (guardian) machine** — in `agent-backend/.env`:
+- `GUARDIAN_TOKEN=<long random string>` and `GUARDIAN_PARENT_PIN=<pin>`
+- `GUARDIAN_HOST=0.0.0.0` (accept LAN connections)
+
+Then run `scripts/launch-guardian.sh` and note this machine's LAN IP (e.g. `192.168.1.50`).
+
+**On the kid (browser) machine** — in `agent-backend/.env`:
+- `GUARDIAN_TOKEN=<same value as the parent machine>`
+- `GUARDIAN_ENDPOINT=http://192.168.1.50:2947` (the parent's IP + `GUARDIAN_PORT`)
+
+Then run `scripts/launch-chromium.sh` — it writes that endpoint into
+`extension/guardian-config.json` and prints `Guardian endpoint: …` so you can confirm. Do **not**
+set `GUARDIAN_PARENT_PIN` on this machine.
+
+Leave both `GUARDIAN_HOST` and `GUARDIAN_ENDPOINT` at their defaults for the single-machine
+(`localhost`) setup — unchanged.
+
+**Security on a LAN:**
+- `GUARDIAN_TOKEN` now protects the guardian against the whole LAN — use a long random value and
+  keep it identical on both machines.
+- `GUARDIAN_PARENT_PIN` stays only on the parent's machine and is never sent to the kid's browser,
+  so the approval secret isn't on the kid's computer at all.
+- `extension/guardian-config.json` holds the token and is readable by any page the kid visits (it's
+  a web-accessible extension resource), so anything on the LAN that learns the token could call the
+  guardian. Scope the firewall to **allow only the kid's machine** to reach ports `2947` (and metrics
+  `2948`), block everything else, and rotate `GUARDIAN_TOKEN` if it leaks.
+- **Firewall must permit the inbound connection.** Setting `GUARDIAN_HOST=0.0.0.0` binds all
+  interfaces, but the OS firewall still has to allow incoming traffic to `GUARDIAN_PORT`. On macOS,
+  if the application firewall is set to "block all incoming connections" (and/or stealth mode), it
+  silently drops the connection from the kid's machine — add an allow rule for the guardian (or the
+  Python/uvicorn binary) on the parent's machine. Quick check from the kid's machine:
+  `python3 -c "import urllib.request; print(urllib.request.urlopen('http://<parent-ip>:2947/health').read())"`.
+
 ## MCP tools
 
 `browser_navigate`, `browser_snapshot` (accessibility tree), `browser_click`,
