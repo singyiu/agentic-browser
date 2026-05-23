@@ -11,7 +11,8 @@ from starlette.testclient import TestClient
 from agent_backend.guardian.access_requests import RequestStore
 from agent_backend.guardian.cache import CacheEntry
 from agent_backend.guardian.config import GuardianConfig
-from agent_backend.guardian.service import create_app
+from agent_backend.guardian.profiles import load_profiles
+from agent_backend.guardian.service import _ProfileRuntime, create_app
 from agent_backend.guardian.verdict import Verdict
 from agent_backend.guardian.whitelist import Whitelist, WhitelistStore
 
@@ -602,3 +603,188 @@ def test_review_decision_rejects_non_printable_entry(tmp_path: Path) -> None:
         headers=_PIN,
     )
     assert resp.status_code == 422
+
+
+# --- multi-profile isolation (one backend, several teens) -------------------
+
+_ALICE = {"X-Guardian-Token": "tok-alice"}
+_BOB = {"X-Guardian-Token": "tok-bob"}
+
+
+def _two_profiles(tmp_path: Path) -> dict[str, _ProfileRuntime]:
+    """Two teens, each with its own token and file-backed stores (fake caches)."""
+    return {
+        "alice": _ProfileRuntime(
+            name="alice",
+            token="tok-alice",
+            whitelist=WhitelistStore(str(tmp_path / "alice_wl.json")),
+            request_store=RequestStore(str(tmp_path / "alice_req.json")),
+            cache=FakeCache(),
+        ),
+        "bob": _ProfileRuntime(
+            name="bob",
+            token="tok-bob",
+            whitelist=WhitelistStore(str(tmp_path / "bob_wl.json")),
+            request_store=RequestStore(str(tmp_path / "bob_req.json")),
+            cache=FakeCache(),
+        ),
+    }
+
+
+def _multi_client(
+    runtimes: dict[str, _ProfileRuntime],
+    classifier: object | None = None,
+    parent_pin: str = "testpin",
+) -> TestClient:
+    app = create_app(
+        _config(parent_pin=parent_pin),
+        classifier=classifier or FakeClassifier(Verdict("allow")),
+        event_log=FakeLog(),
+        runtimes=runtimes,
+    )
+    return TestClient(app)
+
+
+def test_default_profile_when_no_registry() -> None:
+    # With neither registry nor runtimes, a single default profile uses config.token.
+    client = _client(FakeClassifier(Verdict("allow", "", 0.95)))
+    assert client.post("/classify", json={"url": "http://x"}, headers=_HEADERS).status_code == 200
+    bad = client.post("/classify", json={"url": "http://x"}, headers={"X-Guardian-Token": "nope"})
+    assert bad.status_code == 403
+
+
+def test_unknown_token_rejected_in_multi_profile(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path))
+    # The single-machine token is not a profile token here, and a missing token is rejected too.
+    assert client.post("/classify", json={"url": "http://x"}, headers=_HEADERS).status_code == 403
+    assert client.post("/classify", json={"url": "http://x"}).status_code == 403
+
+
+def test_each_token_resolves_to_its_own_profile(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    _multi_client(runtimes).post(
+        "/access-request", json={"url": "https://x.test/p"}, headers=_ALICE
+    )
+    # Alice's request landed only in Alice's store.
+    assert len(runtimes["alice"].request_store.current().pending()) == 1
+    assert len(runtimes["bob"].request_store.current().pending()) == 0
+
+
+def test_whitelist_allow_is_per_profile(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    runtimes["alice"].whitelist.add("www.youtube.com")
+    fake = FakeClassifier(Verdict("block", "nope", 0.97, ("scary",)))
+    client = _multi_client(runtimes, classifier=fake)
+
+    alice = client.post(
+        "/classify", json={"url": "https://www.youtube.com/"}, headers=_ALICE
+    ).json()
+    bob = client.post("/classify", json={"url": "https://www.youtube.com/"}, headers=_BOB).json()
+    assert alice["verdict"] == "allow" and alice["reason"] == "whitelisted"
+    assert bob["verdict"] == "block"  # bob's whitelist is empty, so the classifier runs
+
+
+def test_whitelist_writes_are_isolated(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path))
+    client.post("/whitelist", json={"entry": "www.youtube.com"}, headers=_ALICE)
+    alice = client.get("/whitelist", headers=_ALICE).json()["entries"]
+    bob = client.get("/whitelist", headers=_BOB).json()["entries"]
+    assert {"value": "www.youtube.com", "type": "exact"} in alice
+    assert bob == []
+
+
+def test_access_request_status_is_isolated(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path))
+    client.post("/access-request", json={"url": "https://x.test/p"}, headers=_ALICE)
+    alice = client.get("/access-request", params={"url": "https://x.test/p"}, headers=_ALICE).json()
+    bob = client.get("/access-request", params={"url": "https://x.test/p"}, headers=_BOB).json()
+    assert alice["status"] == "pending"
+    assert bob["status"] == "none"
+
+
+def test_review_lists_all_profiles_labelled(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    runtimes["alice"].request_store.add_request(
+        url="https://a.test/", url_key="a.test/", host="a.test", reason="r", note=""
+    )
+    runtimes["bob"].request_store.add_request(
+        url="https://b.test/", url_key="b.test/", host="b.test", reason="r", note=""
+    )
+    body = _multi_client(runtimes).get("/review/requests", headers=_PIN).json()
+    by_profile = {r["profile"]: r["url"] for r in body["pending"]}
+    assert by_profile == {"alice": "https://a.test/", "bob": "https://b.test/"}
+
+
+def test_review_decision_routes_to_owning_profile(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    req = runtimes["alice"].request_store.add_request(
+        url="https://a.test/page", url_key="a.test/page", host="a.test", reason="r", note=""
+    )
+    resp = _multi_client(runtimes).post(
+        "/review/decision", json={"id": req.id, "decision": "approve"}, headers=_PIN
+    )
+    assert resp.status_code == 200
+    # Approval lands in Alice's whitelist + clears Alice's cache; Bob is untouched.
+    assert "https://a.test/page" in runtimes["alice"].whitelist.current().values
+    assert runtimes["alice"].cache.cleared == 1
+    assert runtimes["bob"].whitelist.current().values == ()
+    assert runtimes["bob"].cache.cleared == 0
+
+
+def test_review_decision_unknown_id_404_multi(tmp_path: Path) -> None:
+    resp = _multi_client(_two_profiles(tmp_path)).post(
+        "/review/decision", json={"id": "req_nope", "decision": "approve"}, headers=_PIN
+    )
+    assert resp.status_code == 404
+
+
+def test_registry_path_builds_isolated_profiles(tmp_path: Path) -> None:
+    # Exercises the real load_profiles -> create_app(registry=) wiring (the registry branch of
+    # _build_runtimes that constructs real stores and creates per-teen dirs), not injected runtimes.
+    profiles_file = tmp_path / "profiles.json"
+    profiles_file.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "alice",
+                    "token": "tok-alice",
+                    "whitelist_path": str(tmp_path / "alice" / "wl.json"),
+                    "requests_path": str(tmp_path / "alice" / "req.json"),
+                    "cache_path": str(tmp_path / "alice" / "cache.db"),
+                },
+                {
+                    "name": "bob",
+                    "token": "tok-bob",
+                    "whitelist_path": str(tmp_path / "bob" / "wl.json"),
+                    "requests_path": str(tmp_path / "bob" / "req.json"),
+                    "cache_path": str(tmp_path / "bob" / "cache.db"),
+                },
+            ]
+        )
+    )
+    registry = load_profiles(
+        str(profiles_file),
+        default_token="",
+        default_whitelist_path=":memory:",
+        default_requests_path=":memory:",
+        default_cache_path=":memory:",
+    )
+    app = create_app(
+        _config(),
+        classifier=FakeClassifier(Verdict("block", "nope", 0.97, ("scary",))),
+        event_log=FakeLog(),
+        registry=registry,
+    )
+    client = TestClient(app)
+
+    add = client.post("/whitelist", json={"entry": "www.youtube.com"}, headers=_ALICE)
+    assert add.status_code == 200
+    alice = client.post(
+        "/classify", json={"url": "https://www.youtube.com/"}, headers=_ALICE
+    ).json()
+    bob = client.post("/classify", json={"url": "https://www.youtube.com/"}, headers=_BOB).json()
+    assert alice["reason"] == "whitelisted"  # alice's whitelist short-circuits
+    assert bob["verdict"] == "block"  # bob's whitelist is empty, so the classifier runs
+    # The per-teen data dirs were created on disk by the registry branch.
+    assert (tmp_path / "alice" / "wl.json").exists()
+    assert (tmp_path / "bob").is_dir()

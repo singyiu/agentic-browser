@@ -67,6 +67,8 @@
       .badge { border-radius: 999px; padding: 0.05rem 0.55rem; font-size: 0.78rem; }
       .badge.approved { background: rgba(110, 231, 168, 0.18); color: var(--ok); }
       .badge.rejected { background: rgba(255, 155, 155, 0.18); color: var(--bad); }
+      .badge.profile { background: rgba(138, 180, 255, 0.15); color: var(--accent); }
+      .meta { display: flex; gap: 0.4rem; align-items: center; white-space: nowrap; }
       #toast {
         position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%);
         background: #14203c; border: 1px solid var(--accent); border-radius: 8px;
@@ -177,7 +179,13 @@
         const link = safeHref(req.url)
           ? el("a", { href: req.url, target: "_blank", rel: "noopener noreferrer", class: "url", text: req.url })
           : el("span", { class: "url", text: req.url });
-        card.append(el("div", { class: "head" }, link, el("span", { class: "host", text: req.host || "" })));
+        const meta = el(
+          "span",
+          { class: "meta" },
+          req.profile ? el("span", { class: "badge profile", text: req.profile }) : null,
+          el("span", { class: "host", text: req.host || "" })
+        );
+        card.append(el("div", { class: "head" }, link, meta));
         if (req.reason) card.append(el("p", { class: "reason", text: "Blocked: " + req.reason }));
         if (req.note) card.append(el("p", { class: "note", text: "Note: " + req.note }));
         card.append(el("p", { class: "muted", text: timeAgo(req.created_ts) }));
@@ -209,6 +217,7 @@
           "div",
           { class: "recent-row" },
           el("span", { class: "badge " + req.status, text: req.status }),
+          req.profile ? el("span", { class: "badge profile", text: req.profile }) : null,
           el("span", { class: "url", text: req.whitelist_entry || req.url }),
           el("span", { class: "muted", text: timeAgo(req.decided_ts) })
         );

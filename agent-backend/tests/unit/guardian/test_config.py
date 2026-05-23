@@ -9,6 +9,7 @@ from agent_backend.guardian.config import (
     DEFAULT_METRICS_PORT,
     DEFAULT_MODEL,
     DEFAULT_PORT,
+    DEFAULT_PROFILES_PATH,
     DEFAULT_REQUESTS_PATH,
     DEFAULT_WHITELIST_PATH,
     GuardianConfig,
@@ -25,9 +26,11 @@ def _env(**over: str) -> dict[str, str]:
     return base
 
 
-def test_requires_guardian_token() -> None:
-    with pytest.raises(ConfigError, match="GUARDIAN_TOKEN"):
-        GuardianConfig.from_env({"CLAUDE_CODE_OAUTH_TOKEN": "t", "CLAUDE_CONFIG_DIR": "/x"})
+def test_token_optional_when_absent() -> None:
+    # GUARDIAN_TOKEN is now optional; the "need an auth identity" check lives in
+    # load_profiles (a profiles file can supply per-teen tokens instead).
+    cfg = GuardianConfig.from_env({"CLAUDE_CODE_OAUTH_TOKEN": "t", "CLAUDE_CONFIG_DIR": "/x"})
+    assert cfg.token == ""
 
 
 def test_requires_oauth_token() -> None:
@@ -81,3 +84,13 @@ def test_requests_path_override() -> None:
 def test_parent_pin_set() -> None:
     cfg = GuardianConfig.from_env(_env(GUARDIAN_PARENT_PIN="1234"))
     assert cfg.parent_pin == "1234"
+
+
+def test_profiles_path_default() -> None:
+    cfg = GuardianConfig.from_env(_env())
+    assert cfg.profiles_path == DEFAULT_PROFILES_PATH
+
+
+def test_profiles_path_override() -> None:
+    cfg = GuardianConfig.from_env(_env(GUARDIAN_PROFILES_PATH="/tmp/p.json"))
+    assert cfg.profiles_path == "/tmp/p.json"

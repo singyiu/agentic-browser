@@ -170,6 +170,49 @@ Leave both `GUARDIAN_HOST` and `GUARDIAN_ENDPOINT` at their defaults for the sin
   Python/uvicorn binary) on the parent's machine. Quick check from the kid's machine:
   `python3 -c "import urllib.request; print(urllib.request.urlopen('http://<parent-ip>:2947/health').read())"`.
 
+## Multiple teen profiles (LAN)
+
+One guardian can govern **several teens at once**, each on their own computer, with **separate rules
+per teen** — a site approved for one teen stays blocked for the others, and one teen can't see
+another's requests. Each teen's browser uses its **own** `GUARDIAN_TOKEN`; the guardian maps the
+token to that teen's profile.
+
+**On the parent (guardian) machine** — list the teens in `data/guardian_profiles.json` (a JSON
+array; copy `guardian_profiles.example.json` to start), each with a name and a long random token:
+
+```json
+[
+  { "name": "alex", "token": "<long-random-secret-for-alex>" },
+  { "name": "sam",  "token": "<long-random-secret-for-sam>" }
+]
+```
+
+Set `GUARDIAN_HOST=0.0.0.0` and `GUARDIAN_PARENT_PIN=<pin>` in `.env`, then run
+`scripts/launch-guardian.sh` (it prints `Teen profiles: alex, sam`). Each teen gets isolated files
+under `data/profiles/<name>/` (whitelist, requests, cache), created automatically. `GUARDIAN_TOKEN`
+is **not** needed when a profiles file is present. Optional per-teen overrides
+`whitelist_path` / `requests_path` / `cache_path` may be added to a profile entry.
+
+**On each teen's (browser) machine** — in `agent-backend/.env` set that teen's own token plus the
+parent's endpoint, then run `scripts/launch-chromium.sh` (unchanged from single-machine):
+- `GUARDIAN_TOKEN=<that teen's token from the registry>`
+- `GUARDIAN_ENDPOINT=http://<parent-ip>:2947`
+
+**Reviewing:** open `http://<parent-ip>:2947/review` on the parent's machine and enter the PIN.
+Every teen's pending and recent requests appear on one page, each **labelled with the teen's name**;
+approving adds the entry to **that teen's** whitelist only.
+
+**Notes & security:**
+- Give each teen a **different** long random token; a teen who learns another's token could act as
+  them. The registry file holds every teen's token, so keep it only on the parent's machine (never
+  copy it to a teen's computer — each teen's `.env` holds just their own token) and restrict its
+  file permissions (e.g. `chmod 600`).
+- Profiles are read once at startup, so **adding or removing a teen needs a guardian restart**.
+- With no `data/guardian_profiles.json` (or an empty list), the guardian runs exactly as before: a
+  single profile using `GUARDIAN_TOKEN` and the legacy `data/guardian_whitelist.json` /
+  `data/guardian_requests.json` — single-machine and single-teen-LAN setups are unchanged.
+- The LAN firewall guidance above still applies: allow only the teens' machines to reach `2947`.
+
 ## MCP tools
 
 `browser_navigate`, `browser_snapshot` (accessibility tree), `browser_click`,

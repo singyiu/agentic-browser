@@ -1,0 +1,10 @@
+[
+  {
+    "name": "alex",
+    "token": "REPLACE-with-a-long-random-secret-unique-to-alex"
+  },
+  {
+    "name": "sam",
+    "token": "REPLACE-with-a-long-random-secret-unique-to-sam"
+  }
+]

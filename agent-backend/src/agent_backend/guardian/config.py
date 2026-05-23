@@ -18,6 +18,7 @@ DEFAULT_CACHE_PATH = "data/guardian_cache.db"
 DEFAULT_EVENT_LOG_PATH = "data/guardian_events.jsonl"
 DEFAULT_WHITELIST_PATH = "data/guardian_whitelist.json"
 DEFAULT_REQUESTS_PATH = "data/guardian_requests.json"
+DEFAULT_PROFILES_PATH = "data/guardian_profiles.json"
 
 
 def _clean(value: str | None) -> str:
@@ -41,15 +42,15 @@ class GuardianConfig:
     model: str
     config_dir: str
     oauth_token: str
+    # Path to the teen-profiles registry (JSON). Empty/absent → single "default" profile.
+    profiles_path: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> GuardianConfig:
         e = os.environ if env is None else env
+        # GUARDIAN_TOKEN is optional: a profiles file (GUARDIAN_PROFILES_PATH) can supply
+        # per-teen tokens instead. load_profiles enforces that at least one identity exists.
         token = _clean(e.get("GUARDIAN_TOKEN"))
-        if not token:
-            raise ConfigError(
-                "GUARDIAN_TOKEN is not set (shared secret the extension sends as X-Guardian-Token)."
-            )
         oauth = _clean(e.get("CLAUDE_CODE_OAUTH_TOKEN"))
         if not oauth:
             raise ConfigError(
@@ -74,6 +75,7 @@ class GuardianConfig:
             event_log_path=_clean(e.get("GUARDIAN_EVENT_LOG_PATH")) or DEFAULT_EVENT_LOG_PATH,
             whitelist_path=_clean(e.get("GUARDIAN_WHITELIST_PATH")) or DEFAULT_WHITELIST_PATH,
             requests_path=_clean(e.get("GUARDIAN_REQUESTS_PATH")) or DEFAULT_REQUESTS_PATH,
+            profiles_path=_clean(e.get("GUARDIAN_PROFILES_PATH")) or DEFAULT_PROFILES_PATH,
             parent_pin=_clean(e.get("GUARDIAN_PARENT_PIN")),
             classify_timeout_s=float(
                 _clean(e.get("GUARDIAN_CLASSIFY_TIMEOUT")) or DEFAULT_TIMEOUT_S
