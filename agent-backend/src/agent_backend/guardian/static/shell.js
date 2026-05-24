@@ -63,8 +63,144 @@
   const SECTIONS = ["dashboard", "requests", "whitelist", "settings"];
 
   function loadDashboard() {}
-  function loadRequests() {}
   function loadWhitelist() {}
+
+  /* Requests — pending access requests + recent decisions (moved here from the
+     old /review page). Approve / reject route through POST /review/decision. */
+  async function loadRequests() {
+    let r;
+    try {
+      r = await api("/review/requests");
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (r.ok) renderRequests(await r.json());
+  }
+
+  function renderRequests(data) {
+    const pending = data.pending || [];
+    const recent = data.recent || [];
+    $("req-pending-list").replaceChildren(...pending.map(pendingCard));
+    $("req-pending-empty").hidden = pending.length > 0;
+    $("req-recent-list").replaceChildren(...recent.map(recentRow));
+    $("req-recent-empty").hidden = recent.length > 0;
+  }
+
+  function pendingCard(req) {
+    const card = el("div", { class: "card" });
+    const link = safeHref(req.url)
+      ? el("a", {
+          href: req.url,
+          target: "_blank",
+          rel: "noopener noreferrer",
+          class: "url",
+          text: req.url,
+        })
+      : el("span", { class: "url", text: req.url });
+    const meta = el(
+      "span",
+      { class: "meta" },
+      req.profile
+        ? el("span", { class: "badge profile", text: req.profile })
+        : null,
+      el("span", { class: "host", text: req.host || "" }),
+    );
+    card.append(el("div", { class: "head" }, link, meta));
+    if (req.reason)
+      card.append(el("p", { class: "reason", text: "Blocked: " + req.reason }));
+    if (req.note)
+      card.append(el("p", { class: "note", text: "Note: " + req.note }));
+    card.append(el("p", { class: "muted", text: timeAgo(req.created_ts) }));
+
+    card.append(
+      el("label", {
+        class: "entry-label",
+        text: "Allow (edit to broaden — e.g. host/* or a topic like “BeyBlade anime”):",
+      }),
+    );
+    const entry = el("input", {
+      class: "entry",
+      "aria-label": "Whitelist entry",
+    });
+    entry.value = req.url;
+    card.append(entry);
+
+    const approve = el("button", {
+      class: "approve",
+      type: "button",
+      text: "Approve",
+    });
+    approve.addEventListener("click", () =>
+      decide(req.id, "approve", { whitelist_entry: entry.value.trim() }),
+    );
+
+    const reject = el("button", {
+      class: "reject",
+      type: "button",
+      text: "Reject",
+    });
+    const noteBox = el("textarea", {
+      class: "reject-note",
+      rows: "2",
+      placeholder: "Optional note (why)",
+      hidden: true,
+    });
+    const rejectConfirm = el("button", {
+      class: "reject-confirm",
+      type: "button",
+      text: "Confirm reject",
+      hidden: true,
+    });
+    reject.addEventListener("click", () => {
+      noteBox.hidden = false;
+      rejectConfirm.hidden = false;
+      reject.hidden = true;
+    });
+    rejectConfirm.addEventListener("click", () =>
+      decide(req.id, "reject", { note: noteBox.value.trim() }),
+    );
+
+    card.append(
+      el("div", { class: "actions" }, approve, reject),
+      noteBox,
+      rejectConfirm,
+    );
+    return card;
+  }
+
+  function recentRow(req) {
+    return el(
+      "div",
+      { class: "recent-row" },
+      el("span", { class: "badge " + req.status, text: req.status }),
+      req.profile
+        ? el("span", { class: "badge profile", text: req.profile })
+        : null,
+      el("span", { class: "url", text: req.whitelist_entry || req.url }),
+      el("span", { class: "muted", text: timeAgo(req.decided_ts) }),
+    );
+  }
+
+  async function decide(id, decision, extra) {
+    let r;
+    try {
+      r = await api("/review/decision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({ id, decision }, extra)),
+      });
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (r.ok) {
+      toast(decision === "approve" ? "Approved ✓" : "Rejected");
+      loadRequests();
+    } else {
+      toast("Action failed (" + r.status + ").");
+    }
+  }
 
   function loadSection(key) {
     if (key === "dashboard") loadDashboard();

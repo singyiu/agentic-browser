@@ -239,6 +239,56 @@
   color: var(--fg-2);
 }
 
+/* ---------- Requests (cards moved from the old review page) ---------- */
+#sec-requests .card {
+  margin-bottom: var(--space-3);
+}
+#sec-requests .head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  align-items: baseline;
+}
+#sec-requests .meta {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  white-space: nowrap;
+}
+#sec-requests .host {
+  color: var(--fg-2);
+  font-size: var(--size-sm);
+  white-space: nowrap;
+}
+#sec-requests .reason,
+#sec-requests .note {
+  margin: var(--space-2) 0;
+}
+#sec-requests .note {
+  color: var(--fg-2);
+}
+#sec-requests .entry-label {
+  display: block;
+  margin: var(--space-3) 0 var(--space-1);
+  color: var(--fg-2);
+  font-size: var(--size-sm);
+}
+#sec-requests .entry {
+  width: 100%;
+}
+#sec-requests .actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+#sec-requests .reject-note {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+#sec-requests .reject-confirm {
+  margin-top: var(--space-2);
+}
+
 /* ---------- Whitelist ---------- */
 .wl-add {
   display: flex;
