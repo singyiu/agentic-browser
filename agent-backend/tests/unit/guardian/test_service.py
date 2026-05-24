@@ -12,7 +12,8 @@ from agent_backend.guardian.access_requests import RequestStore
 from agent_backend.guardian.cache import CacheEntry
 from agent_backend.guardian.config import GuardianConfig
 from agent_backend.guardian.profiles import load_profiles
-from agent_backend.guardian.service import _ProfileRuntime, create_app
+from agent_backend.guardian.runtime import ProfileRuntime
+from agent_backend.guardian.service import create_app
 from agent_backend.guardian.verdict import Verdict
 from agent_backend.guardian.whitelist import Whitelist, WhitelistStore
 
@@ -854,17 +855,17 @@ _ALICE = {"X-Guardian-Token": "tok-alice"}
 _BOB = {"X-Guardian-Token": "tok-bob"}
 
 
-def _two_profiles(tmp_path: Path) -> dict[str, _ProfileRuntime]:
+def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
     """Two teens, each with its own token and file-backed stores (fake caches)."""
     return {
-        "alice": _ProfileRuntime(
+        "alice": ProfileRuntime(
             name="alice",
             token="tok-alice",
             whitelist=WhitelistStore(str(tmp_path / "alice_wl.json")),
             request_store=RequestStore(str(tmp_path / "alice_req.json")),
             cache=FakeCache(),
         ),
-        "bob": _ProfileRuntime(
+        "bob": ProfileRuntime(
             name="bob",
             token="tok-bob",
             whitelist=WhitelistStore(str(tmp_path / "bob_wl.json")),
@@ -875,7 +876,7 @@ def _two_profiles(tmp_path: Path) -> dict[str, _ProfileRuntime]:
 
 
 def _multi_client(
-    runtimes: dict[str, _ProfileRuntime],
+    runtimes: dict[str, ProfileRuntime],
     classifier: object | None = None,
     parent_pin: str = "testpin",
 ) -> TestClient:

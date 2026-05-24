@@ -6,7 +6,7 @@ import asyncio
 import functools
 import hmac
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ from .metrics import GuardianMetrics
 from .normalize import extract_host, normalize_url
 from .pin_store import PinStore, validate_pin_format
 from .profiles import DEFAULT_PROFILE_NAME, ProfileRegistry
+from .runtime import ProfileRuntime
 from .verdict import Verdict
 from .whitelist import WhitelistStore, classify_entry
 
@@ -54,30 +55,15 @@ def _response(
     }
 
 
-@dataclass(frozen=True, slots=True)
-class _ProfileRuntime:
-    """One teen's isolated stores, resolved per request from the X-Guardian-Token.
-
-    Holds the profile's secret ``token``; this is an internal object and must never be
-    serialized into a response.
-    """
-
-    name: str
-    token: str
-    whitelist: WhitelistStore
-    request_store: RequestStore
-    cache: VerdictCache
-
-
 def _build_runtimes(
     config: GuardianConfig,
     registry: ProfileRegistry | None,
-    runtimes: dict[str, _ProfileRuntime] | None,
+    runtimes: dict[str, ProfileRuntime] | None,
     *,
     cache: VerdictCache | None,
     whitelist: WhitelistStore | None,
     request_store: RequestStore | None,
-) -> dict[str, _ProfileRuntime]:
+) -> dict[str, ProfileRuntime]:
     """Resolve per-profile stores. Precedence: injected runtimes > registry > single default.
 
     The single-default branch wraps the injected (or config-path) stores, so existing
@@ -86,7 +72,7 @@ def _build_runtimes(
     if runtimes is not None:
         return runtimes
     if registry is not None:
-        built: dict[str, _ProfileRuntime] = {}
+        built: dict[str, ProfileRuntime] = {}
         for profile in registry.all():
             # Each teen's stores live in their own dir; create it before the stores open.
             for path in (profile.whitelist_path, profile.requests_path, profile.cache_path):
@@ -96,7 +82,7 @@ def _build_runtimes(
                     raise ConfigError(
                         f"Cannot create data directory for profile {profile.name!r}: {exc}"
                     ) from exc
-            built[profile.name] = _ProfileRuntime(
+            built[profile.name] = ProfileRuntime(
                 name=profile.name,
                 token=profile.token,
                 whitelist=WhitelistStore(profile.whitelist_path),
@@ -111,7 +97,7 @@ def _build_runtimes(
             "create_app: no registry/runtimes and GUARDIAN_TOKEN is empty — nothing could "
             "authenticate. Set GUARDIAN_TOKEN or pass a registry/runtimes."
         )
-    default = _ProfileRuntime(
+    default = ProfileRuntime(
         name=DEFAULT_PROFILE_NAME,
         token=config.token,
         whitelist=whitelist or WhitelistStore(config.whitelist_path),
@@ -131,7 +117,7 @@ def create_app(
     whitelist: WhitelistStore | None = None,
     request_store: RequestStore | None = None,
     registry: ProfileRegistry | None = None,
-    runtimes: dict[str, _ProfileRuntime] | None = None,
+    runtimes: dict[str, ProfileRuntime] | None = None,
     pin_store: PinStore | None = None,
 ) -> Starlette:
     """Build the guardian app. Dependencies may be injected for testing.
@@ -156,7 +142,7 @@ def create_app(
         request_store=request_store,
     )
 
-    def _resolve_runtime(request: Request) -> _ProfileRuntime | None:
+    def _resolve_runtime(request: Request) -> ProfileRuntime | None:
         """Map ``X-Guardian-Token`` to its teen profile, or None to reject.
 
         Compares against every profile's token with ``hmac.compare_digest`` (selecting after
@@ -166,7 +152,7 @@ def create_app(
         token = request.headers.get("X-Guardian-Token", "")
         if not token:
             return None
-        match: _ProfileRuntime | None = None
+        match: ProfileRuntime | None = None
         for runtime in profile_runtimes.values():
             if hmac.compare_digest(runtime.token, token):
                 match = runtime
@@ -492,7 +478,7 @@ def create_app(
 
         # Find which teen owns this request (ids are globally unique uuid4); the decision and its
         # side effects apply only to that teen's stores, never another's.
-        owner: _ProfileRuntime | None = None
+        owner: ProfileRuntime | None = None
         existing = None
         for runtime in profile_runtimes.values():
             match = runtime.request_store.current().by_id(request_id)
@@ -545,7 +531,7 @@ def create_app(
             metrics.record_access_decision("reject")
         return JSONResponse({"id": decided.id, "status": decided.status})
 
-    def _resolve_parent_profile(name: str) -> _ProfileRuntime | None:
+    def _resolve_parent_profile(name: str) -> ProfileRuntime | None:
         """Pick the profile a parent whitelist write targets.
 
         Parents authenticate with the PIN (not a teen token), so the request carries no
