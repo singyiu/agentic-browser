@@ -63,7 +63,98 @@
   const SECTIONS = ["dashboard", "requests", "whitelist", "settings"];
 
   function loadDashboard() {}
-  function loadWhitelist() {}
+
+  /* Whitelist — parent view of allowed sites/topics via /review/whitelist. */
+  async function loadWhitelist() {
+    let r;
+    try {
+      r = await api("/review/whitelist");
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (r.ok) renderWhitelist((await r.json()).entries || []);
+  }
+
+  function renderWhitelist(entries) {
+    $("wl-list").replaceChildren(...entries.map(whitelistRow));
+    $("wl-empty").hidden = entries.length > 0;
+  }
+
+  function whitelistRow(entry) {
+    const remove = el("button", {
+      class: "reject",
+      type: "button",
+      text: "Remove",
+    });
+    remove.addEventListener("click", () => removeWhitelistEntry(entry));
+    return el(
+      "div",
+      { class: "wl-row" },
+      el("span", { class: "wl-row__value", text: entry.value }),
+      el(
+        "span",
+        { class: "wl-row__meta" },
+        el("span", { class: "badge profile", text: entry.type }),
+        remove,
+      ),
+    );
+  }
+
+  async function addWhitelistEntry() {
+    const input = $("wl-entry");
+    const value = input.value.trim();
+    const hint = $("wl-hint");
+    hint.className = "hint";
+    hint.textContent = "";
+    if (!value) {
+      hint.className = "hint bad";
+      hint.textContent = "Enter a site or topic to allow.";
+      return;
+    }
+    let r;
+    try {
+      r = await api("/review/whitelist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entry: value }),
+      });
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (r.ok) {
+      input.value = "";
+      toast("Added");
+      loadWhitelist();
+    } else {
+      hint.className = "hint bad";
+      hint.textContent =
+        r.status === 422
+          ? "That entry isn't valid."
+          : "Could not add (" + r.status + ").";
+    }
+  }
+
+  async function removeWhitelistEntry(entry) {
+    let r;
+    try {
+      r = await api("/review/whitelist", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entry: entry.value, profile: entry.profile }),
+      });
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (r.ok) {
+      toast("Removed");
+      loadWhitelist();
+    } else {
+      toast("Could not remove (" + r.status + ").");
+    }
+  }
 
   /* Requests — pending access requests + recent decisions (moved here from the
      old /review page). Approve / reject route through POST /review/decision. */
@@ -337,6 +428,10 @@
       if (e.key === "Enter") unlock();
     });
     $("lock-btn").addEventListener("click", lock);
+    $("wl-add-btn").addEventListener("click", addWhitelistEntry);
+    $("wl-entry").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") addWhitelistEntry();
+    });
     initSidebar();
     window.addEventListener("hashchange", route);
     $("gate-pin").focus();
