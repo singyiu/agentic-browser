@@ -601,6 +601,31 @@ def create_app(
             return JSONResponse({"value": entry, "type": classify_entry(entry)})
         return JSONResponse({"ok": True})
 
+    async def settings_change_pin(request: Request) -> JSONResponse:
+        # Rotate the parent PIN. Re-authenticate with the *current* PIN from the body (not the
+        # header) so an unlocked-but-unattended tab can't silently change the credential. We
+        # verify the supplied current PIN ourselves, so this does not use _require_pin.
+        if not pin_store.is_configured():
+            return JSONResponse({"error": "parent PIN not configured"}, status_code=503)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        current = str(body.get("current_pin", "")).strip()
+        new_pin = str(body.get("new_pin", "")).strip()
+        if not pin_store.verify(current):
+            return JSONResponse({"error": "current PIN is incorrect"}, status_code=403)
+        error = validate_pin_format(new_pin)
+        if error is not None:
+            return JSONResponse({"error": error}, status_code=400)
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, pin_store.set_pin, new_pin)
+        except OSError:
+            return JSONResponse({"error": "could not save the PIN"}, status_code=500)
+        event_log.log("parent_pin_changed")  # records the event, never the PIN value
+        return JSONResponse({"ok": True})
+
     app = Starlette(
         routes=[
             Route("/", home_page, methods=["GET"]),
@@ -616,6 +641,7 @@ def create_app(
             Route("/review/requests", review_requests, methods=["GET"]),
             Route("/review/decision", review_decision, methods=["POST"]),
             Route("/review/whitelist", review_whitelist, methods=["GET", "POST", "DELETE"]),
+            Route("/settings/pin", settings_change_pin, methods=["POST"]),
             # Shared design-system assets (tokens, component CSS, self-hosted fonts, brand
             # SVG) for the served pages. No auth — purely static, public styling like the
             # page shells themselves. The /static prefix never shadows the exact routes above.

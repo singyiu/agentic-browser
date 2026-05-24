@@ -623,6 +623,53 @@ def test_setup_pin_rejects_bad_format(tmp_path: Path) -> None:
     assert client.get("/setup/status").json() == {"pin_configured": False}
 
 
+# --- settings: change PIN (re-auth with current PIN) ---
+
+
+def test_settings_change_pin_503_when_unconfigured(tmp_path: Path) -> None:
+    client = _client(
+        FakeClassifier(Verdict("allow")), parent_pin="", admin_path=str(tmp_path / "admin.json")
+    )
+    resp = client.post("/settings/pin", json={"current_pin": "", "new_pin": "9999"})
+    assert resp.status_code == 503
+
+
+def test_settings_change_pin_403_wrong_current_pin() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).post(
+        "/settings/pin", json={"current_pin": "wrongpin", "new_pin": "9876"}
+    )
+    assert resp.status_code == 403
+    assert "current PIN" in resp.json()["error"]
+
+
+def test_settings_change_pin_400_bad_new_format() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).post(
+        "/settings/pin", json={"current_pin": "testpin", "new_pin": "abc"}
+    )
+    assert resp.status_code == 400
+
+
+def test_settings_change_pin_requires_json_body() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).post("/settings/pin", content=b"notjson")
+    assert resp.status_code == 422
+
+
+def test_settings_change_pin_success_swaps_credential(tmp_path: Path) -> None:
+    client = _client(
+        FakeClassifier(Verdict("allow")),
+        parent_pin="testpin",
+        admin_path=str(tmp_path / "admin.json"),
+    )
+    resp = client.post("/settings/pin", json={"current_pin": "testpin", "new_pin": "8888"})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    # On the same running app: the old PIN is rejected, the new one works.
+    old = client.get("/review/requests", headers={"X-Guardian-Parent-Pin": "testpin"})
+    assert old.status_code == 403
+    new = client.get("/review/requests", headers={"X-Guardian-Parent-Pin": "8888"})
+    assert new.status_code == 200
+
+
 # --- review list (PIN-gated) ---
 
 
