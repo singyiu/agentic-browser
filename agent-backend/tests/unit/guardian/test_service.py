@@ -526,6 +526,12 @@ def test_static_components_css_served() -> None:
     assert resp.headers["content-type"].startswith("text/css")
 
 
+def test_static_shell_css_served() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/static/aegis-shell.css")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/css")
+
+
 # --- home page (app shell; first-run redirect) ---
 
 

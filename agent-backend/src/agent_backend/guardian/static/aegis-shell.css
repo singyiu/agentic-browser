@@ -1,0 +1,347 @@
+/* =========================================================================
+   AEGIS APP SHELL — parent dashboard layout (guardian-only; NOT shipped to
+   the extension). Layout only: visual atoms (button, card, input, badge,
+   headings, .brand) come from aegis-components.css; tokens from
+   aegis-tokens.css.
+
+   The Aegis design system has no sidebar primitive ("not a dashboard
+   product"); this shell intentionally introduces one for the admin UI,
+   staying inside the Aegis palette/tokens. Active-nav uses solid terracotta
+   + cream (5.47:1) and inactive labels use cocoa --fg-1 (12.49:1) — both
+   WCAG AA; the tinted terracotta-soft fill fails AA so it is not used for
+   text.
+   ========================================================================= */
+
+:root {
+  --shell-sidebar-w: 232px;
+  --shell-rail-w: 64px;
+  --shell-max-col: 880px;
+}
+
+/* ---------- PIN gate (full-screen, shown until unlocked) ---------- */
+.pin-gate {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+.pin-gate__card {
+  width: 100%;
+  max-width: 360px;
+}
+.pin-gate .brand {
+  margin-bottom: var(--space-4);
+}
+.pin-gate input {
+  width: 100%;
+}
+.pin-gate__btn {
+  width: 100%;
+  margin-top: var(--space-4);
+}
+
+/* ---------- Shell grid ---------- */
+.app-shell {
+  display: grid;
+  grid-template-columns: var(--shell-sidebar-w) 1fr;
+  min-height: 100vh;
+}
+.app-shell.is-collapsed {
+  grid-template-columns: var(--shell-rail-w) 1fr;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-3);
+  background: var(--bg-2);
+  border-right: 1px solid var(--border-1);
+  overflow: hidden;
+}
+.sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: var(--space-1) var(--space-2) var(--space-3);
+}
+.sidebar__brand img {
+  height: 28px;
+  width: auto;
+  flex: none;
+}
+.sidebar__wordmark {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--size-xl);
+  color: var(--fg-1);
+  white-space: nowrap;
+}
+.sidebar__nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar__footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Nav item — used for <a> links and <button> controls (lock, collapse). */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  background: none;
+  color: var(--fg-1);
+  font-family: inherit;
+  font-size: var(--size-sm);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.nav-item:hover {
+  background: var(--bg-3);
+  color: var(--fg-1);
+  text-decoration: none;
+}
+.nav-item__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+.nav-item__icon svg {
+  width: 20px;
+  height: 20px;
+}
+.nav-item__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-item[aria-current="page"] {
+  background: var(--aegis-terracotta);
+  color: var(--aegis-cream);
+}
+.nav-item[aria-current="page"]:hover {
+  background: var(--aegis-terracotta-2);
+  color: var(--aegis-cream);
+}
+
+/* Desktop collapse chevron flips when the rail is collapsed. */
+.sidebar__collapse .nav-item__icon svg {
+  transition: transform var(--dur-med) var(--ease-out);
+}
+.app-shell.is-collapsed .sidebar__collapse .nav-item__icon svg {
+  transform: rotate(180deg);
+}
+
+/* Collapsed rail: hide labels + wordmark, center the icons. */
+.app-shell.is-collapsed .sidebar__wordmark,
+.app-shell.is-collapsed .nav-item__label {
+  display: none;
+}
+.app-shell.is-collapsed .nav-item {
+  justify-content: center;
+  padding-inline: var(--space-2);
+}
+.app-shell.is-collapsed .sidebar__brand {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+/* ---------- Mobile menu toggle + backdrop (off-canvas under 768px) ---------- */
+.shell-toggle {
+  position: fixed;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 40;
+  display: none; /* desktop uses the in-sidebar collapse button instead */
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-soft), var(--shadow-inset-hairline);
+}
+.shell-backdrop {
+  display: none;
+}
+
+/* ---------- Content ---------- */
+.shell-main {
+  min-width: 0;
+  padding: var(--space-6) var(--space-5) var(--space-8);
+  overflow-x: hidden;
+}
+.shell-col {
+  max-width: var(--shell-max-col);
+  margin: 0 auto;
+}
+.shell-section {
+  outline: none; /* focused programmatically on route change; no visible ring on the container */
+}
+.shell-section h1 {
+  margin: 0 0 var(--space-4);
+}
+.shell-section h2 {
+  margin: var(--space-6) 0 var(--space-3);
+}
+
+/* ---------- Dashboard tiles ---------- */
+.dash-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+}
+.dash-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  text-align: left;
+  cursor: pointer;
+}
+.dash-tile__count {
+  font-family: var(--font-display);
+  font-size: var(--size-3xl);
+  line-height: var(--lh-tight);
+  color: var(--fg-1);
+}
+.dash-tile__label {
+  font-size: var(--size-sm);
+  color: var(--fg-2);
+}
+
+/* ---------- Whitelist ---------- */
+.wl-add {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+.wl-add input {
+  flex: 1;
+}
+.wl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-1);
+}
+.wl-row:last-child {
+  border-bottom: none;
+}
+.wl-row__value {
+  word-break: break-all;
+}
+.wl-row__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+/* ---------- Settings ---------- */
+.settings-field {
+  display: block;
+  margin: var(--space-3) 0 var(--space-1);
+  color: var(--fg-2);
+  font-size: var(--size-sm);
+  font-weight: var(--weight-semibold);
+}
+.settings-card input {
+  width: 100%;
+}
+#set-pin-current,
+#set-pin-new,
+#set-pin-confirm {
+  letter-spacing: 0.25em;
+}
+
+/* ---------- Responsive: off-canvas sidebar under 768px ---------- */
+@media (max-width: 767px) {
+  .app-shell,
+  .app-shell.is-collapsed {
+    grid-template-columns: 1fr;
+  }
+  .shell-toggle {
+    display: flex;
+  }
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: min(80vw, var(--shell-sidebar-w));
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform var(--dur-med) var(--ease-out);
+    box-shadow: var(--shadow-lifted);
+  }
+  .app-shell.is-mobile-open .sidebar {
+    transform: translateX(0);
+  }
+  /* When the drawer is open on mobile, always show labels (ignore rail-collapse). */
+  .app-shell.is-collapsed .sidebar__wordmark,
+  .app-shell.is-collapsed .nav-item__label {
+    display: revert;
+  }
+  .app-shell.is-collapsed .nav-item {
+    justify-content: flex-start;
+    padding-inline: var(--space-3);
+  }
+  .shell-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    background: oklch(0.2 0.02 60 / 0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-med) var(--ease-out);
+  }
+  .app-shell.is-mobile-open .shell-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .shell-main {
+    padding-top: calc(var(--space-6) + 44px);
+  }
+}
+
+/* Honour reduced-motion. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .nav-item,
+  .shell-backdrop,
+  .sidebar__collapse .nav-item__icon svg {
+    transition: none;
+  }
+}
