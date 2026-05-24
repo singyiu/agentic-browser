@@ -1,0 +1,29 @@
+# systemd *user* unit template for the agentic-browser guardian (Linux "parent box").
+#
+# This is NOT installed directly. scripts/install-guardian-service.sh fills in the
+# placeholders and writes the result to ~/.config/systemd/user/<name>.service:
+#   - the absolute path to the agent-backend directory
+#   - the installer's PATH, so the SDK can find `claude` and `node`
+#
+# Secrets stay out of this file: the guardian loads .env from WorkingDirectory and
+# launch-guardian.sh sets CLAUDE_CONFIG_DIR.
+#
+# NOTE: provided for the documented LAN topology; not exercised on macOS. Enable lingering
+# (`loginctl enable-linger "$USER"`) if you want it running without an active login session.
+
+[Unit]
+Description=agentic-browser guardian (parental-control classifier)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__BACKEND_ROOT__
+Environment=PATH=__PATH__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash __BACKEND_ROOT__/scripts/launch-guardian.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

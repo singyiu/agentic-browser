@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS LaunchAgent template for the agentic-browser guardian.
+
+  This is NOT loaded directly. scripts/install-guardian-service.sh fills in the
+  placeholders and writes the result to ~/Library/LaunchAgents/<label>.plist:
+    - the launchd job label (e.g. com.agentic-browser.guardian)
+    - the absolute path to the agent-backend directory
+    - the installer's PATH, so the SDK can find `claude` and `node` (launchd's default
+      PATH is minimal and would miss nvm/npm bins)
+
+  Secrets stay out of this file: the guardian loads .env from WorkingDirectory and
+  launch-guardian.sh sets CLAUDE_CONFIG_DIR.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__BACKEND_ROOT__/scripts/launch-guardian.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__BACKEND_ROOT__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__PATH__</string>
+    <!-- Flush stdout/stderr to the log files in real time (no block buffering). -->
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+
+  <!-- Start at login and keep it alive (auto-restart on crash or clean exit). -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- Wait 30s between respawns so a permanent config error can't tight-loop. -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__BACKEND_ROOT__/data/guardian.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__BACKEND_ROOT__/data/guardian.err.log</string>
+</dict>
+</plist>

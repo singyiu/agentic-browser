@@ -144,7 +144,9 @@ stays on the browser machine and is not exposed).
 - `GUARDIAN_TOKEN=<long random string>` and `GUARDIAN_PARENT_PIN=<pin>`
 - `GUARDIAN_HOST=0.0.0.0` (accept LAN connections)
 
-Then run `scripts/launch-guardian.sh` and note this machine's LAN IP (e.g. `192.168.1.50`).
+Then run `scripts/launch-guardian.sh` and note this machine's LAN IP (e.g. `192.168.1.50`). To
+keep the guardian up across reboots and crashes, install it as a background service — see **Run the
+guardian as an always-on service** below.
 
 **On the kid (browser) machine** — in `agent-backend/.env`:
 - `GUARDIAN_TOKEN=<same value as the parent machine>`
@@ -215,6 +217,42 @@ approving adds the entry to **that teen's** whitelist only.
   single profile using `GUARDIAN_TOKEN` and the legacy `data/guardian_whitelist.json` /
   `data/guardian_requests.json` — single-machine and single-teen-LAN setups are unchanged.
 - The LAN firewall guidance above still applies: allow only the teens' machines to reach `2947`.
+
+## Run the guardian as an always-on service
+
+The guardian should stay up whenever the kid's browser might be used — a manual
+`bash scripts/launch-guardian.sh` in a terminal dies on logout, reboot, or crash. Install it as a
+background service that **starts at login and restarts automatically**:
+
+```sh
+bash scripts/install-guardian-service.sh     # macOS (launchd) or Linux (systemd --user)
+```
+
+It reuses `launch-guardian.sh`, reads your existing `.env`, and then probes `/health` to confirm the
+guardian actually came up (printing the tail of `data/guardian.err.log` if it didn't). Process output
+goes to `data/guardian.out.log` and `data/guardian.err.log`.
+
+```sh
+# macOS — status / logs / remove:
+launchctl print "gui/$(id -u)/com.agentic-browser.guardian" | grep -iE 'state|pid'
+tail -f data/guardian.out.log data/guardian.err.log
+bash scripts/uninstall-guardian-service.sh
+```
+
+- **No secrets in the service file.** The generated unit (`~/Library/LaunchAgents/` on macOS,
+  `~/.config/systemd/user/` on Linux) holds only paths; the guardian still loads
+  `CLAUDE_CODE_OAUTH_TOKEN` / `GUARDIAN_TOKEN` / `GUARDIAN_PARENT_PIN` from `.env` at startup.
+- **`claude` CLI / `node` must be on `PATH`.** The classifier spawns the Claude Code CLI, so the
+  installer bakes your current `PATH` into the unit (launchd/systemd otherwise start with a minimal
+  `PATH` that misses nvm/npm bins). If you switch Node versions (e.g. via nvm), **re-run the
+  installer** so the baked path stays valid.
+- **Restart after editing profiles.** Profiles are read once at startup, so after changing
+  `data/guardian_profiles.json` restart the service — macOS:
+  `launchctl kickstart -k "gui/$(id -u)/com.agentic-browser.guardian"`; Linux:
+  `systemctl --user restart agentic-guardian.service`.
+- **Linux parent boxes.** The same installer writes a systemd `--user` unit from
+  `deploy/guardian.systemd.service.template`; run `loginctl enable-linger "$USER"` to keep it running
+  without an active login. (Provided for the LAN topology; verified on macOS.)
 
 ## MCP tools
 
