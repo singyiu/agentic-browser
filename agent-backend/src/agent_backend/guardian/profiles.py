@@ -22,7 +22,7 @@ from pathlib import Path
 from ..config import ConfigError
 
 DEFAULT_PROFILE_NAME = "default"
-_PROFILE_DATA_DIR = "data/profiles"
+PROFILE_DATA_DIR = "data/profiles"
 # A profile name becomes a filesystem directory component, so keep it to a safe slug
 # (rejects path separators and ".."). Public so the manager and HTTP handlers validate
 # the same way the loader does.
@@ -48,6 +48,12 @@ class ProfileRegistry:
 
     def all(self) -> tuple[Profile, ...]:
         return self.profiles
+
+
+def default_profile_paths(name: str, base: str = PROFILE_DATA_DIR) -> tuple[str, str, str]:
+    """The default (whitelist, requests, cache) file paths for a profile under ``base``."""
+    root = f"{base}/{name}"
+    return (f"{root}/whitelist.json", f"{root}/requests.json", f"{root}/cache.db")
 
 
 def load_profiles(
@@ -137,13 +143,13 @@ def _build_profile(entry: object) -> Profile:
         raise ConfigError(f"Invalid profile name {name!r}: use only letters, digits, '-' or '_'.")
     if not token:
         raise ConfigError(f"Profile {name!r} has an empty token.")
-    base = f"{_PROFILE_DATA_DIR}/{name}"
+    wl, req, cache = default_profile_paths(name)
     return Profile(
         name=name,
         token=token,
-        whitelist_path=str(entry.get("whitelist_path") or f"{base}/whitelist.json"),
-        requests_path=str(entry.get("requests_path") or f"{base}/requests.json"),
-        cache_path=str(entry.get("cache_path") or f"{base}/cache.db"),
+        whitelist_path=str(entry.get("whitelist_path") or wl),
+        requests_path=str(entry.get("requests_path") or req),
+        cache_path=str(entry.get("cache_path") or cache),
     )
 
 

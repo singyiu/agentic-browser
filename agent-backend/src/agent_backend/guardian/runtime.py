@@ -7,9 +7,12 @@ depend on it without importing each other (which would be a circular import).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
+from ..config import ConfigError
 from .access_requests import RequestStore
 from .cache import VerdictCache
+from .profiles import Profile
 from .whitelist import WhitelistStore
 
 
@@ -26,3 +29,24 @@ class ProfileRuntime:
     whitelist: WhitelistStore
     request_store: RequestStore
     cache: VerdictCache
+
+
+def build_runtime(profile: Profile) -> ProfileRuntime:
+    """Open a profile's stores into a live runtime, creating its data dirs first.
+
+    Raises :class:`ConfigError` if a data directory cannot be created.
+    """
+    for path in (profile.whitelist_path, profile.requests_path, profile.cache_path):
+        try:
+            Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ConfigError(
+                f"Cannot create data directory for profile {profile.name!r}: {exc}"
+            ) from exc
+    return ProfileRuntime(
+        name=profile.name,
+        token=profile.token,
+        whitelist=WhitelistStore(profile.whitelist_path),
+        request_store=RequestStore(profile.requests_path),
+        cache=VerdictCache(profile.cache_path),
+    )
