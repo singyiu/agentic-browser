@@ -8,7 +8,13 @@ from pathlib import Path
 import pytest
 
 from agent_backend.config import ConfigError
-from agent_backend.guardian.profiles import Profile, ProfileRegistry, load_profiles
+from agent_backend.guardian.profiles import (
+    PROFILE_NAME_RE,
+    Profile,
+    ProfileRegistry,
+    load_profiles,
+    save_profiles,
+)
 
 _DEFAULTS = {
     "default_token": "deftok",
@@ -184,3 +190,58 @@ def test_load_non_list_json_raises(tmp_path: Path) -> None:
     path = _write(tmp_path, {"name": "alice", "token": "t"})
     with pytest.raises(ConfigError):
         load_profiles(path, **_DEFAULTS)
+
+
+# --- PROFILE_NAME_RE (public, reused by the manager/handlers) ---------------
+
+
+def test_profile_name_re_accepts_slug() -> None:
+    assert PROFILE_NAME_RE.match("alice_2-b")
+
+
+def test_profile_name_re_rejects_separators() -> None:
+    assert not PROFILE_NAME_RE.match("a/b")
+    assert not PROFILE_NAME_RE.match("..")
+    assert not PROFILE_NAME_RE.match("")
+
+
+# --- save_profiles: round-trips with load_profiles --------------------------
+
+
+def test_save_profiles_round_trip(tmp_path: Path) -> None:
+    profiles = _registry().all()
+    path = str(tmp_path / "out.json")
+    save_profiles(profiles, path)
+    reloaded = load_profiles(path, **_DEFAULTS)
+
+    def key(p: Profile) -> tuple[str, ...]:
+        return (p.name, p.token, p.whitelist_path, p.requests_path, p.cache_path)
+
+    assert {key(p) for p in reloaded.all()} == {key(p) for p in profiles}
+
+
+def test_save_profiles_creates_parent_dir(tmp_path: Path) -> None:
+    path = str(tmp_path / "nested" / "dir" / "profiles.json")
+    save_profiles(_registry().all(), path)
+    assert Path(path).exists()
+    assert {p.name for p in load_profiles(path, **_DEFAULTS).all()} == {"alice", "bob"}
+
+
+def test_save_profiles_atomic_keeps_original_on_replace_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = str(tmp_path / "out.json")
+    save_profiles((Profile("alice", "tok-alice", "a/wl.json", "a/req.json", "a/cache.db"),), path)
+    before = Path(path).read_text(encoding="utf-8")
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("agent_backend.guardian.profiles.os.replace", boom)
+    with pytest.raises(OSError):
+        save_profiles((Profile("bob", "tok-bob", "b/wl.json", "b/req.json", "b/cache.db"),), path)
+
+    # A failed replace must leave the original file intact (no partial write)...
+    assert Path(path).read_text(encoding="utf-8") == before
+    # ...and not litter the directory with a leftover temp file.
+    assert list(tmp_path.glob("*.tmp")) == []

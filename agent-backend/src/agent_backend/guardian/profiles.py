@@ -13,7 +13,9 @@ single ``"default"`` profile on the legacy paths, byte-identical to the single-m
 from __future__ import annotations
 
 import json
+import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,8 +24,9 @@ from ..config import ConfigError
 DEFAULT_PROFILE_NAME = "default"
 _PROFILE_DATA_DIR = "data/profiles"
 # A profile name becomes a filesystem directory component, so keep it to a safe slug
-# (rejects path separators and "..").
-_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# (rejects path separators and ".."). Public so the manager and HTTP handlers validate
+# the same way the loader does.
+PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +89,35 @@ def load_profiles(
     )
 
 
+def save_profiles(profiles: Iterable[Profile], path: str) -> None:
+    """Persist profiles to the JSON file, atomically.
+
+    Writes a sibling temp file then ``os.replace``s it over the target, so a crash
+    mid-write can never leave a partial or corrupt registry. The serialized schema
+    mirrors what :func:`load_profiles` reads, so the two round-trip exactly.
+    """
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = [_profile_to_dict(p) for p in profiles]
+    tmp = target.parent / f"{target.name}.tmp"
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    try:
+        os.replace(tmp, target)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _profile_to_dict(profile: Profile) -> dict[str, str]:
+    return {
+        "name": profile.name,
+        "token": profile.token,
+        "whitelist_path": profile.whitelist_path,
+        "requests_path": profile.requests_path,
+        "cache_path": profile.cache_path,
+    }
+
+
 def _parse(path: Path) -> list[object]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -101,7 +133,7 @@ def _build_profile(entry: object) -> Profile:
         raise ConfigError("Each guardian profile must be a JSON object with name and token.")
     name = str(entry.get("name", "")).strip()
     token = str(entry.get("token", "")).strip()
-    if not _NAME_RE.match(name):
+    if not PROFILE_NAME_RE.match(name):
         raise ConfigError(f"Invalid profile name {name!r}: use only letters, digits, '-' or '_'.")
     if not token:
         raise ConfigError(f"Profile {name!r} has an empty token.")
