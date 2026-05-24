@@ -361,6 +361,85 @@ def test_whitelist_add_write_failure_returns_500() -> None:
     assert "error" in resp.json()
 
 
+# --- whitelist: parent-facing CRUD (PIN-gated) ---
+
+
+def test_review_whitelist_get_503_when_pin_unset(tmp_path: Path) -> None:
+    wl = WhitelistStore(str(tmp_path / "wl.json"))
+    client = _client(
+        FakeClassifier(Verdict("allow")),
+        whitelist=wl,
+        parent_pin="",
+        admin_path=str(tmp_path / "admin.json"),
+    )
+    assert client.get("/review/whitelist").status_code == 503
+
+
+def test_review_whitelist_get_403_wrong_pin(tmp_path: Path) -> None:
+    wl = WhitelistStore(str(tmp_path / "wl.json"))
+    resp = _client(FakeClassifier(Verdict("allow")), whitelist=wl).get(
+        "/review/whitelist", headers={"X-Guardian-Parent-Pin": "wrong"}
+    )
+    assert resp.status_code == 403
+
+
+def test_review_whitelist_get_lists_entries_with_profile(tmp_path: Path) -> None:
+    wl = WhitelistStore(str(tmp_path / "wl.json"))
+    wl.add("www.youtube.com")
+    wl.add("BeyBlade anime")
+    resp = _client(FakeClassifier(Verdict("allow")), whitelist=wl).get(
+        "/review/whitelist", headers=_PIN
+    )
+    assert resp.status_code == 200
+    entries = resp.json()["entries"]
+    pairs = {(e["value"], e["type"]) for e in entries}
+    assert ("www.youtube.com", "exact") in pairs
+    assert ("BeyBlade anime", "content") in pairs
+    assert all("profile" in e for e in entries)
+
+
+def test_review_whitelist_post_adds_and_clears_cache(tmp_path: Path) -> None:
+    wl = WhitelistStore(str(tmp_path / "wl.json"))
+    cache = FakeCache()
+    resp = _client(FakeClassifier(Verdict("allow")), cache=cache, whitelist=wl).post(
+        "/review/whitelist", json={"entry": "www.youtube.com"}, headers=_PIN
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"value": "www.youtube.com", "type": "exact"}
+    assert "www.youtube.com" in wl.current().values
+    assert cache.cleared == 1
+
+
+def test_review_whitelist_post_requires_pin(tmp_path: Path) -> None:
+    wl = WhitelistStore(str(tmp_path / "wl.json"))
+    resp = _client(FakeClassifier(Verdict("allow")), whitelist=wl).post(
+        "/review/whitelist",
+        json={"entry": "www.youtube.com"},
+        headers={"X-Guardian-Parent-Pin": "bad"},
+    )
+    assert resp.status_code == 403
+    assert "www.youtube.com" not in wl.current().values
+
+
+def test_review_whitelist_post_rejects_empty(tmp_path: Path) -> None:
+    wl = WhitelistStore(str(tmp_path / "wl.json"))
+    resp = _client(FakeClassifier(Verdict("allow")), whitelist=wl).post(
+        "/review/whitelist", json={"entry": "   "}, headers=_PIN
+    )
+    assert resp.status_code == 422
+
+
+def test_review_whitelist_delete_removes_entry(tmp_path: Path) -> None:
+    wl = WhitelistStore(str(tmp_path / "wl.json"))
+    wl.add("www.youtube.com")
+    resp = _client(FakeClassifier(Verdict("allow")), whitelist=wl).request(
+        "DELETE", "/review/whitelist", json={"entry": "www.youtube.com"}, headers=_PIN
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert "www.youtube.com" not in wl.current().values
+
+
 # --- access requests: teen submit + status (token-authed) ---
 
 

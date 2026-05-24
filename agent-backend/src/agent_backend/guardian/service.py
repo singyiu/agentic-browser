@@ -545,6 +545,62 @@ def create_app(
             metrics.record_access_decision("reject")
         return JSONResponse({"id": decided.id, "status": decided.status})
 
+    def _resolve_parent_profile(name: str) -> _ProfileRuntime | None:
+        """Pick the profile a parent whitelist write targets.
+
+        Parents authenticate with the PIN (not a teen token), so the request carries no
+        profile. Use the explicitly named profile, else the sole profile when there is only
+        one teen (the common case); an ambiguous multi-teen write must name one.
+        """
+        if name:
+            return profile_runtimes.get(name)
+        if len(profile_runtimes) == 1:
+            return next(iter(profile_runtimes.values()))
+        return None
+
+    async def review_whitelist(request: Request) -> JSONResponse:
+        # Parent-facing whitelist management, gated by the PIN (the teen-token /whitelist is the
+        # extension's path). GET aggregates across teens; a write targets one teen's store.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        if request.method == "GET":
+            entries = [
+                {"value": value, "type": classify_entry(value), "profile": rt.name}
+                for rt in profile_runtimes.values()
+                for value in rt.whitelist.current().values
+            ]
+            return JSONResponse({"entries": entries})
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        entry = str(body.get("entry", "")).strip()
+        # Same guard as POST /whitelist: a single bounded line (content entries are injected
+        # verbatim into the classifier prompt, so reject newlines / control chars).
+        if not entry or len(entry) > 512 or not entry.isprintable():
+            return JSONResponse(
+                {"error": "entry must be a non-empty, single-line string (max 512 chars)"},
+                status_code=422,
+            )
+        rt = _resolve_parent_profile(str(body.get("profile", "")).strip())
+        if rt is None:
+            return JSONResponse({"error": "profile required"}, status_code=422)
+        loop = asyncio.get_running_loop()
+        try:
+            if request.method == "POST":
+                await loop.run_in_executor(None, rt.whitelist.add, entry)
+            else:  # DELETE
+                await loop.run_in_executor(None, rt.whitelist.remove, entry)
+            # A whitelist change invalidates cached verdicts.
+            await loop.run_in_executor(None, rt.cache.clear)
+        except OSError:
+            return JSONResponse({"error": "whitelist write failed"}, status_code=500)
+        event_log.log(f"parent_whitelist_{request.method.lower()}", entry=entry, profile=rt.name)
+        if request.method == "POST":
+            return JSONResponse({"value": entry, "type": classify_entry(entry)})
+        return JSONResponse({"ok": True})
+
     app = Starlette(
         routes=[
             Route("/", home_page, methods=["GET"]),
@@ -559,6 +615,7 @@ def create_app(
             Route("/review", review_page, methods=["GET"]),
             Route("/review/requests", review_requests, methods=["GET"]),
             Route("/review/decision", review_decision, methods=["POST"]),
+            Route("/review/whitelist", review_whitelist, methods=["GET", "POST", "DELETE"]),
             # Shared design-system assets (tokens, component CSS, self-hosted fonts, brand
             # SVG) for the served pages. No auth — purely static, public styling like the
             # page shells themselves. The /static prefix never shadows the exact routes above.
