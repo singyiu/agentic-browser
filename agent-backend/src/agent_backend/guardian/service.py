@@ -25,6 +25,7 @@ from .event_log import EventLog
 from .metrics import GuardianMetrics
 from .normalize import extract_host, normalize_url
 from .pin_store import PinStore, validate_pin_format
+from .profile_manager import ProfileManager
 from .profiles import DEFAULT_PROFILE_NAME, ProfileRegistry
 from .runtime import ProfileRuntime
 from .verdict import Verdict
@@ -119,6 +120,7 @@ def create_app(
     registry: ProfileRegistry | None = None,
     runtimes: dict[str, ProfileRuntime] | None = None,
     pin_store: PinStore | None = None,
+    manager: ProfileManager | None = None,
 ) -> Starlette:
     """Build the guardian app. Dependencies may be injected for testing.
 
@@ -133,14 +135,23 @@ def create_app(
     # The PIN lives in the store (hash file written by /setup), with the env PIN as fallback,
     # so a PIN created at runtime takes effect without restarting (config is frozen at startup).
     pin_store = pin_store or PinStore(config.admin_path, env_pin=config.parent_pin)
-    profile_runtimes = _build_runtimes(
-        config,
-        registry,
-        runtimes,
-        cache=cache,
-        whitelist=whitelist,
-        request_store=request_store,
-    )
+    # The manager owns the live name->runtime map (read via _pm.snapshot()) and persists
+    # profile lifecycle changes. When not injected, build it from the same runtimes the
+    # service has always used, plus the registry's profile records (paths) for persistence.
+    if manager is None:
+        profile_runtimes = _build_runtimes(
+            config,
+            registry,
+            runtimes,
+            cache=cache,
+            whitelist=whitelist,
+            request_store=request_store,
+        )
+        profile_records = {p.name: p for p in registry.all()} if registry is not None else {}
+        manager = ProfileManager(
+            profile_records, profile_runtimes, profiles_path=config.profiles_path
+        )
+    _pm = manager
 
     def _resolve_runtime(request: Request) -> ProfileRuntime | None:
         """Map ``X-Guardian-Token`` to its teen profile, or None to reject.
@@ -153,7 +164,7 @@ def create_app(
         if not token:
             return None
         match: ProfileRuntime | None = None
-        for runtime in profile_runtimes.values():
+        for runtime in _pm.snapshot().values():
             if hmac.compare_digest(runtime.token, token):
                 match = runtime
         return match
@@ -451,7 +462,7 @@ def create_app(
         # with the teen it belongs to so approvals can be routed back to the right whitelist.
         pending: list[dict[str, Any]] = []
         recent: list[dict[str, Any]] = []
-        for runtime in profile_runtimes.values():
+        for runtime in _pm.snapshot().values():
             snapshot = runtime.request_store.current()
             pending.extend({**asdict(r), "profile": runtime.name} for r in snapshot.pending())
             recent.extend({**asdict(r), "profile": runtime.name} for r in snapshot.recent_decided())
@@ -480,7 +491,7 @@ def create_app(
         # side effects apply only to that teen's stores, never another's.
         owner: ProfileRuntime | None = None
         existing = None
-        for runtime in profile_runtimes.values():
+        for runtime in _pm.snapshot().values():
             match = runtime.request_store.current().by_id(request_id)
             if match is not None:
                 owner = runtime
@@ -538,10 +549,11 @@ def create_app(
         profile. Use the explicitly named profile, else the sole profile when there is only
         one teen (the common case); an ambiguous multi-teen write must name one.
         """
+        current = _pm.snapshot()
         if name:
-            return profile_runtimes.get(name)
-        if len(profile_runtimes) == 1:
-            return next(iter(profile_runtimes.values()))
+            return current.get(name)
+        if len(current) == 1:
+            return next(iter(current.values()))
         return None
 
     async def review_whitelist(request: Request) -> JSONResponse:
@@ -553,7 +565,7 @@ def create_app(
         if request.method == "GET":
             entries = [
                 {"value": value, "type": classify_entry(value), "profile": rt.name}
-                for rt in profile_runtimes.values()
+                for rt in _pm.snapshot().values()
                 for value in rt.whitelist.current().values
             ]
             return JSONResponse({"entries": entries})
