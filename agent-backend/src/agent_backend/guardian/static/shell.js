@@ -62,7 +62,54 @@
   // regardless, so an unimplemented section simply shows its static markup.
   const SECTIONS = ["dashboard", "requests", "whitelist", "settings"];
 
-  function loadDashboard() {}
+  /* Dashboard — at-a-glance counts from existing endpoints (no new aggregate
+     route); each tile links into its section. */
+  async function loadDashboard() {
+    let pending = 0;
+    let recent = 0;
+    let wl = 0;
+    try {
+      const [rq, rw] = await Promise.all([
+        api("/review/requests"),
+        api("/review/whitelist"),
+      ]);
+      if (rq.ok) {
+        const d = await rq.json();
+        pending = (d.pending || []).length;
+        recent = (d.recent || []).length;
+      }
+      if (rw.ok) wl = ((await rw.json()).entries || []).length;
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    $("dash-tiles").replaceChildren(
+      dashTile(
+        pending,
+        pending === 1 ? "request pending" : "requests pending",
+        "#/requests",
+      ),
+      dashTile(
+        wl,
+        wl === 1 ? "whitelist entry" : "whitelist entries",
+        "#/whitelist",
+      ),
+      dashTile(recent, "recently decided", "#/requests"),
+    );
+  }
+
+  function dashTile(count, label, hash) {
+    const tile = el(
+      "button",
+      { class: "card dash-tile", type: "button" },
+      el("span", { class: "dash-tile__count", text: String(count) }),
+      el("span", { class: "dash-tile__label", text: label }),
+    );
+    tile.addEventListener("click", () => {
+      location.hash = hash;
+    });
+    return tile;
+  }
 
   /* Whitelist — parent view of allowed sites/topics via /review/whitelist. */
   async function loadWhitelist() {
@@ -421,6 +468,68 @@
     else route(); // honour an existing hash (e.g. /review redirected to /#/requests)
   }
 
+  /* ---------- Settings: change PIN ---------- */
+  function pinHint(msg, kind) {
+    const h = $("set-pin-hint");
+    h.className = "hint" + (kind ? " " + kind : "");
+    h.textContent = msg || "";
+  }
+
+  function validatePinMatch() {
+    const nw = $("set-pin-new").value.trim();
+    const cf = $("set-pin-confirm").value.trim();
+    if (nw && cf && nw !== cf)
+      pinHint("New PIN and confirmation don't match.", "bad");
+    else pinHint("", "");
+  }
+
+  async function submitChangePin() {
+    const current = $("set-pin-current").value.trim();
+    const nw = $("set-pin-new").value.trim();
+    const cf = $("set-pin-confirm").value.trim();
+    if (!/^[0-9]{4,8}$/.test(nw)) {
+      pinHint("New PIN must be 4–8 digits.", "bad");
+      return;
+    }
+    if (nw !== cf) {
+      pinHint("New PIN and confirmation don't match.", "bad");
+      return;
+    }
+    let r;
+    try {
+      r = await api("/settings/pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_pin: current, new_pin: nw }),
+      });
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (r.ok) {
+      _pin = nw; // keep the unlocked session valid under the new credential
+      $("set-pin-current").value = "";
+      $("set-pin-new").value = "";
+      $("set-pin-confirm").value = "";
+      pinHint("PIN changed.", "ok");
+      toast("PIN changed ✓");
+      return;
+    }
+    if (r.status === 403) {
+      pinHint("Current PIN is incorrect.", "bad");
+    } else if (r.status === 400) {
+      let msg = "New PIN is not valid.";
+      try {
+        msg = (await r.json()).error || msg;
+      } catch (_e) {
+        /* keep default message */
+      }
+      pinHint(msg, "bad");
+    } else {
+      pinHint("Could not change PIN (" + r.status + ").", "bad");
+    }
+  }
+
   /* ---------- Init ---------- */
   document.addEventListener("DOMContentLoaded", () => {
     $("gate-btn").addEventListener("click", unlock);
@@ -432,6 +541,9 @@
     $("wl-entry").addEventListener("keydown", (e) => {
       if (e.key === "Enter") addWhitelistEntry();
     });
+    $("set-pin-btn").addEventListener("click", submitChangePin);
+    $("set-pin-new").addEventListener("input", validatePinMatch);
+    $("set-pin-confirm").addEventListener("input", validatePinMatch);
     initSidebar();
     window.addEventListener("hashchange", route);
     $("gate-pin").focus();

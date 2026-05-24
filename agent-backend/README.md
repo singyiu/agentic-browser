@@ -105,16 +105,18 @@ button with an optional note). The parent reviews the request and approves or re
 **approving adds the chosen entry to the whitelist**, so the page then follows the whitelist
 rules above.
 
-- **First-time setup:** the first time you open `http://127.0.0.1:2947/setup` (or `/review`,
-  which redirects there until a PIN exists), a wizard walks you through choosing a 4–8 digit
+- **First-time setup:** the first time you open `http://127.0.0.1:2947/` (the home dashboard)
+  with no PIN yet, it redirects to a `/setup` wizard that walks you through choosing a 4–8 digit
   parent PIN. It is saved as a salted hash under `data/guardian_admin.json` and applies
   immediately — no restart, no `.env` editing, never stored in plaintext. (Setting
   `GUARDIAN_PARENT_PIN` in `.env` still works and skips the wizard.) Forgot it? Delete that file
   and re-run the wizard.
-- **Parent review UI:** open `http://127.0.0.1:2947/review` in any browser and enter your PIN.
-  Pending requests show the URL, why it was blocked, the kid's note, and an **editable "allow"
-  field pre-filled with the URL** — broaden it to a section (`youtube.com/results*`) or a topic
-  (`BeyBlade anime`) before approving, or reject with an optional note.
+- **Parent dashboard:** open `http://127.0.0.1:2947/` and enter your PIN. A collapsible sidebar
+  holds **Dashboard** (at-a-glance counts), **Requests** (the review queue — `/review` now
+  redirects here), **Whitelist** (add/remove allowed sites and topics), and **Settings** (change
+  the PIN). Pending requests show the URL, why it was blocked, the kid's note, and an **editable
+  "allow" field pre-filled with the URL** — broaden it to a section (`youtube.com/results*`) or a
+  topic (`BeyBlade anime`) before approving, or reject with an optional note.
 - **The kid gets unblocked** by tapping **Check if approved** on the block page; once
   approved it reopens the page (the backend allows it immediately and the extension's cached
   block is evicted).
@@ -139,19 +141,28 @@ curl -s -H "X-Guardian-Parent-Pin: $PIN" http://127.0.0.1:2947/review/requests
 curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/json' \
   -d '{"id":"req_…","decision":"approve","whitelist_entry":"BeyBlade anime"}' \
   http://127.0.0.1:2947/review/decision
+
+# Parent side: manage the whitelist and rotate the PIN (both PIN-gated).
+curl -s -H "X-Guardian-Parent-Pin: $PIN" http://127.0.0.1:2947/review/whitelist
+curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/json' \
+  -d '{"current_pin":"'"$PIN"'","new_pin":"4321"}' http://127.0.0.1:2947/settings/pin
 ```
 
 ## Look & feel (Aegis design system)
 
-The guardian's pages (`/setup`, `/review`) and the extension's kid block page share one warm,
-light visual system. Design tokens (color, type, spacing, radius, shadow) and a thin component layer
-live in two stylesheets — `aegis-tokens.css` + `aegis-components.css` — that skin the pages' existing
-markup, so no page JS changes when the look changes. They are kept **byte-identical** in two places
-because the guardian and the extension ship as separate units with no build step:
+The guardian's pages (`/` home dashboard, `/setup`) and the extension's kid block page share one
+warm, light visual system. Design tokens (color, type, spacing, radius, shadow) and a thin component
+layer live in two stylesheets — `aegis-tokens.css` + `aegis-components.css` — that skin the pages'
+existing markup, so no page JS changes when the look changes. They are kept **byte-identical** in two
+places because the guardian and the extension ship as separate units with no build step:
 
 - served by the guardian under `/static/…` (`src/agent_backend/guardian/static/`), linked by
-  `setup.html` / `review.html` (Starlette `StaticFiles` mount in `service.py`);
+  `home.html` / `setup.html` (Starlette `StaticFiles` mount in `service.py`);
 - bundled in `extension/`, linked by `block.html`.
+
+The home dashboard's collapsible sidebar adds two **guardian-only** files (not shipped to the
+extension): `aegis-shell.css` (app-shell layout) and `shell.js` (the unlock gate, hash router, and
+the Dashboard / Requests / Whitelist / Settings sections).
 
 Fonts (Manrope, Instrument Serif, JetBrains Mono) are **self-hosted** under each `fonts/` dir — no
 Google Fonts or other third-party calls, so the pages render fully offline. The canonical token source
@@ -229,7 +240,7 @@ parent's endpoint, then run `scripts/launch-chromium.sh` (unchanged from single-
 - `GUARDIAN_TOKEN=<that teen's token from the registry>`
 - `GUARDIAN_ENDPOINT=http://<parent-ip>:2947`
 
-**Reviewing:** open `http://<parent-ip>:2947/review` on the parent's machine and enter the PIN.
+**Reviewing:** open `http://<parent-ip>:2947/` on the parent's machine and enter the PIN.
 Every teen's pending and recent requests appear on one page, each **labelled with the teen's name**;
 approving adds the entry to **that teen's** whitelist only.
 
