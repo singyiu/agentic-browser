@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from ..config import ConfigError
 from .config import GuardianConfig
 from .metrics import GuardianMetrics, start_metrics_server
+from .pin_store import PinStore
 from .profiles import load_profiles
 from .service import create_app
 
@@ -43,6 +44,11 @@ def main() -> None:  # pragma: no cover - process entry point
     print(f"Guardian listening on http://{config.host}:{config.port} (model: {config.model})")
     print(f"Teen profiles: {profiles}")
     print(f"Prometheus metrics on http://127.0.0.1:{config.metrics_port}/metrics")
+    if not PinStore(config.admin_path, env_pin=config.parent_pin).is_configured():
+        print(
+            f"First-time setup: open http://{config.host}:{config.port}/setup "
+            "to create your parent PIN."
+        )
     uvicorn.run(app, host=config.host, port=config.port, log_level="warning")
 
 

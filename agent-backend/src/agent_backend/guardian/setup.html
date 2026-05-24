@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Guardian — first-time setup</title>
+    <style>
+      :root {
+        --bg: #101426;
+        --card: #1a2138;
+        --line: #2a3357;
+        --text: #e7e9f0;
+        --muted: #b9c0d6;
+        --accent: #8ab4ff;
+        --ok: #6ee7a8;
+        --bad: #ff9b9b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      main { max-width: 520px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+      h1 { font-size: 1.4rem; }
+      p.lead { color: var(--muted); }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+      }
+      label.field { display: block; margin: 0.9rem 0 0.3rem; color: var(--muted); font-size: 0.9rem; }
+      label.field:first-child { margin-top: 0; }
+      .pin-row { display: flex; gap: 0.5rem; }
+      input {
+        font: inherit;
+        width: 100%;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: #0c1020;
+        color: var(--text);
+        padding: 0.55rem 0.7rem;
+        letter-spacing: 0.25em;
+      }
+      input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+      button {
+        font: inherit;
+        cursor: pointer;
+        border-radius: 8px;
+        border: 1px solid var(--accent);
+        background: #14203c;
+        color: var(--text);
+        padding: 0.55rem 0.9rem;
+        white-space: nowrap;
+      }
+      button:hover:not(:disabled) { background: #1b2c52; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button.primary { width: 100%; margin-top: 1.1rem; border-color: var(--ok); }
+      button.ghost { border-color: var(--line); background: transparent; }
+      .hint { font-size: 0.82rem; margin: 0.35rem 0 0; color: var(--muted); min-height: 1.1em; }
+      .hint.ok { color: var(--ok); }
+      .hint.bad { color: var(--bad); }
+      .error { color: var(--bad); min-height: 1.2em; margin-top: 0.6rem; }
+      a.cta { color: var(--accent); }
+      .success-icon { font-size: 2.2rem; margin: 0; }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>🛡️ Guardian setup</h1>
+
+      <section id="loading-panel">
+        <p class="lead">Loading…</p>
+      </section>
+
+      <!-- First-run wizard -->
+      <section id="setup-panel" hidden>
+        <div class="card">
+          <p class="lead" id="intro"></p>
+        </div>
+        <div class="card">
+          <label class="field" for="pin">Create a PIN (4–8 digits)</label>
+          <div class="pin-row">
+            <input id="pin" type="password" inputmode="numeric" autocomplete="off"
+                   maxlength="8" placeholder="••••" aria-label="New PIN" />
+            <button id="toggle" class="ghost" type="button" aria-label="Show or hide the PIN">Show</button>
+          </div>
+          <p id="pin-hint" class="hint"></p>
+
+          <label class="field" for="confirm">Re-enter the PIN</label>
+          <input id="confirm" type="password" inputmode="numeric" autocomplete="off"
+                 maxlength="8" placeholder="••••" aria-label="Confirm PIN" />
+          <p id="match-hint" class="hint"></p>
+
+          <button id="create" class="primary" type="button" disabled>Create PIN</button>
+          <p id="error" class="error"></p>
+        </div>
+      </section>
+
+      <!-- Already set up / success -->
+      <section id="done-panel" hidden>
+        <div class="card">
+          <p class="success-icon">✅</p>
+          <p id="done-msg" class="lead"></p>
+          <p><a class="cta" href="/review">Go to the review dashboard →</a></p>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      // This page renders only static, app-controlled strings, and does so via textContent
+      // (never innerHTML) to stay XSS-safe even if a message ever carries untrusted text.
+      const $ = (id) => document.getElementById(id);
+
+      // Mirror of the server-side rule (validate_pin_format): ASCII digits, 4–8 long.
+      const isValidPin = (v) => /^[0-9]{4,8}$/.test(v);
+
+      function show(panelId) {
+        for (const id of ["loading-panel", "setup-panel", "done-panel"]) {
+          $(id).hidden = id !== panelId;
+        }
+      }
+
+      function showDone(msg) {
+        $("done-msg").textContent = msg;
+        show("done-panel");
+      }
+
+      function refreshValidity() {
+        const pin = $("pin").value;
+        const confirm = $("confirm").value;
+        const pinHint = $("pin-hint");
+        const matchHint = $("match-hint");
+
+        if (!pin) {
+          pinHint.textContent = "Use 4 to 8 digits.";
+          pinHint.className = "hint";
+        } else if (!isValidPin(pin)) {
+          pinHint.textContent = "Digits only — 4 to 8 of them.";
+          pinHint.className = "hint bad";
+        } else {
+          pinHint.textContent = "Looks good.";
+          pinHint.className = "hint ok";
+        }
+
+        if (!confirm) {
+          matchHint.textContent = "";
+          matchHint.className = "hint";
+        } else if (pin !== confirm) {
+          matchHint.textContent = "The two PINs don't match yet.";
+          matchHint.className = "hint bad";
+        } else {
+          matchHint.textContent = "PINs match.";
+          matchHint.className = "hint ok";
+        }
+
+        $("create").disabled = !(isValidPin(pin) && pin === confirm);
+      }
+
+      async function createPin() {
+        const pin = $("pin").value;
+        $("error").textContent = "";
+        if (!isValidPin(pin) || pin !== $("confirm").value) {
+          refreshValidity();
+          return;
+        }
+        $("create").disabled = true;
+        let r;
+        try {
+          r = await fetch("/setup/pin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pin }),
+          });
+        } catch (_e) {
+          $("error").textContent = "Could not reach the guardian service.";
+          $("create").disabled = false;
+          return;
+        }
+        if (r.ok) {
+          $("pin").value = "";
+          $("confirm").value = "";
+          showDone(
+            "Your parent PIN is set. Keep it secret from your child — you'll enter it to " +
+              "approve or block the sites they ask to unblock."
+          );
+          return;
+        }
+        if (r.status === 409) {
+          showDone("A parent PIN is already set up on this guardian.");
+          return;
+        }
+        let msg = "Could not save the PIN. Please try again.";
+        if (r.status === 422) {
+          try {
+            msg = (await r.json()).error || msg;
+          } catch (_e) {
+            /* keep the default message */
+          }
+        }
+        $("error").textContent = msg;
+        $("create").disabled = false;
+      }
+
+      async function init() {
+        let configured = false;
+        try {
+          const r = await fetch("/setup/status");
+          if (r.ok) configured = !!(await r.json()).pin_configured;
+        } catch (_e) {
+          // If status can't be read, fall through to the wizard; the POST surfaces real errors.
+        }
+        if (configured) {
+          showDone("A parent PIN is already set up on this guardian.");
+          return;
+        }
+        $("intro").textContent =
+          "Welcome! Create a parent PIN to finish setting up the guardian. This PIN lets you — " +
+          "the parent — approve or block the sites your child asks to unblock. Pick something " +
+          "you'll remember but your child won't guess.";
+        show("setup-panel");
+        $("pin").focus();
+        refreshValidity();
+      }
+
+      $("pin").addEventListener("input", refreshValidity);
+      $("confirm").addEventListener("input", refreshValidity);
+      $("create").addEventListener("click", createPin);
+      $("confirm").addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !$("create").disabled) createPin();
+      });
+      $("toggle").addEventListener("click", () => {
+        const hidden = $("pin").type === "password";
+        $("pin").type = $("confirm").type = hidden ? "text" : "password";
+        $("toggle").textContent = hidden ? "Hide" : "Show";
+      });
+
+      init();
+    </script>
+  </body>
+</html>

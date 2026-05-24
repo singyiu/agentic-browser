@@ -153,7 +153,8 @@
           return;
         }
         if (r.status === 503) {
-          $("pin-error").textContent = "No parent PIN is configured on the server (set GUARDIAN_PARENT_PIN).";
+          $("pin-error").textContent = "No parent PIN is set up yet. Taking you to setup…";
+          window.location.replace("/setup");
           return;
         }
         if (r.status === 403) {
@@ -265,6 +266,19 @@
       $("pin").addEventListener("keydown", (e) => {
         if (e.key === "Enter") unlock();
       });
+
+      // First run: if no PIN exists yet, guide the parent to the setup wizard instead of
+      // showing a dead-end unlock form.
+      (async () => {
+        try {
+          const r = await fetch("/setup/status");
+          if (r.ok && !(await r.json()).pin_configured) {
+            window.location.replace("/setup");
+          }
+        } catch (_e) {
+          // Network error: stay here; unlock() will surface any problem on submit.
+        }
+      })();
     </script>
   </body>
 </html>

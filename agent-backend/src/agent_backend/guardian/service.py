@@ -23,6 +23,7 @@ from .config import GuardianConfig
 from .event_log import EventLog
 from .metrics import GuardianMetrics
 from .normalize import extract_host, normalize_url
+from .pin_store import PinStore, validate_pin_format
 from .profiles import DEFAULT_PROFILE_NAME, ProfileRegistry
 from .verdict import Verdict
 from .whitelist import WhitelistStore, classify_entry
@@ -130,6 +131,7 @@ def create_app(
     request_store: RequestStore | None = None,
     registry: ProfileRegistry | None = None,
     runtimes: dict[str, _ProfileRuntime] | None = None,
+    pin_store: PinStore | None = None,
 ) -> Starlette:
     """Build the guardian app. Dependencies may be injected for testing.
 
@@ -141,6 +143,9 @@ def create_app(
     classifier = classifier or Classifier(config)
     event_log = event_log or EventLog(config.event_log_path)
     metrics = metrics or GuardianMetrics()
+    # The PIN lives in the store (hash file written by /setup), with the env PIN as fallback,
+    # so a PIN created at runtime takes effect without restarting (config is frozen at startup).
+    pin_store = pin_store or PinStore(config.admin_path, env_pin=config.parent_pin)
     profile_runtimes = _build_runtimes(
         config,
         registry,
@@ -167,13 +172,14 @@ def create_app(
         return match
 
     def _require_pin(request: Request) -> JSONResponse | None:
-        """Gate parent-only endpoints behind GUARDIAN_PARENT_PIN (never sent to the extension)."""
-        if not config.parent_pin:
+        """Gate parent-only endpoints behind the parent PIN (never sent to the extension).
+
+        Reads through ``pin_store`` (hash file, else env PIN), so a PIN created via /setup
+        applies immediately. ``verify`` is constant-time.
+        """
+        if not pin_store.is_configured():
             return JSONResponse({"error": "parent PIN not configured"}, status_code=503)
-        # Constant-time compare: the PIN is short and the kid's machine can reach this endpoint.
-        if not hmac.compare_digest(
-            request.headers.get("X-Guardian-Parent-Pin", ""), config.parent_pin
-        ):
+        if not pin_store.verify(request.headers.get("X-Guardian-Parent-Pin", "")):
             return JSONResponse({"error": "forbidden"}, status_code=403)
         return None
 
@@ -407,6 +413,34 @@ def create_app(
         metrics.record_access_request(host)
         return JSONResponse({"id": req.id, "status": req.status})
 
+    async def setup_page(_request: Request) -> FileResponse:
+        # First-run wizard. No auth: there is no PIN/token to present yet (like /health).
+        return FileResponse(Path(__file__).parent / "setup.html", media_type="text/html")
+
+    async def setup_status(_request: Request) -> JSONResponse:
+        # Lets the wizard detect first run on load. Leaks only whether a PIN exists, nothing else.
+        return JSONResponse({"pin_configured": pin_store.is_configured()})
+
+    async def setup_pin(request: Request) -> JSONResponse:
+        # One-shot: once a PIN exists this is closed (409), so it can't reset an existing PIN.
+        if pin_store.is_configured():
+            return JSONResponse({"error": "parent PIN already configured"}, status_code=409)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        pin = str(body.get("pin", "")).strip()
+        error = validate_pin_format(pin)
+        if error is not None:
+            return JSONResponse({"error": error}, status_code=422)
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, pin_store.set_pin, pin)
+        except OSError:
+            return JSONResponse({"error": "could not save the PIN"}, status_code=500)
+        event_log.log("parent_pin_set")  # records the event, never the PIN value
+        return JSONResponse({"ok": True})
+
     async def review_page(_request: Request) -> FileResponse:
         # Inert HTML shell (no secrets); the data + actions below require the PIN.
         return FileResponse(Path(__file__).parent / "review.html", media_type="text/html")
@@ -506,6 +540,9 @@ def create_app(
             Route("/dwell", dwell, methods=["POST"]),
             Route("/whitelist", whitelist_endpoint, methods=["GET", "POST", "DELETE"]),
             Route("/access-request", access_request_endpoint, methods=["GET", "POST"]),
+            Route("/setup", setup_page, methods=["GET"]),
+            Route("/setup/status", setup_status, methods=["GET"]),
+            Route("/setup/pin", setup_pin, methods=["POST"]),
             Route("/review", review_page, methods=["GET"]),
             Route("/review/requests", review_requests, methods=["GET"]),
             Route("/review/decision", review_decision, methods=["POST"]),

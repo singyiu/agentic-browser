@@ -103,19 +103,26 @@ button with an optional note). The parent reviews the request and approves or re
 **approving adds the chosen entry to the whitelist**, so the page then follows the whitelist
 rules above.
 
-- **Parent review UI:** open `http://127.0.0.1:2947/review` in any browser and enter
-  `GUARDIAN_PARENT_PIN`. Pending requests show the URL, why it was blocked, the kid's note,
-  and an **editable "allow" field pre-filled with the URL** — broaden it to a section
-  (`youtube.com/results*`) or a topic (`BeyBlade anime`) before approving, or reject with an
-  optional note.
+- **First-time setup:** the first time you open `http://127.0.0.1:2947/setup` (or `/review`,
+  which redirects there until a PIN exists), a wizard walks you through choosing a 4–8 digit
+  parent PIN. It is saved as a salted hash under `data/guardian_admin.json` and applies
+  immediately — no restart, no `.env` editing, never stored in plaintext. (Setting
+  `GUARDIAN_PARENT_PIN` in `.env` still works and skips the wizard.) Forgot it? Delete that file
+  and re-run the wizard.
+- **Parent review UI:** open `http://127.0.0.1:2947/review` in any browser and enter your PIN.
+  Pending requests show the URL, why it was blocked, the kid's note, and an **editable "allow"
+  field pre-filled with the URL** — broaden it to a section (`youtube.com/results*`) or a topic
+  (`BeyBlade anime`) before approving, or reject with an optional note.
 - **The kid gets unblocked** by tapping **Check if approved** on the block page; once
   approved it reopens the page (the backend allows it immediately and the extension's cached
   block is evicted).
-- **Security:** `GUARDIAN_PARENT_PIN` lives only in `.env` and is **never** written into
-  `extension/guardian-config.json`. The kid's browser holds `GUARDIAN_TOKEN` and can reach
-  `127.0.0.1:2947`, so submitting/checking a request uses the token, but **approval requires
-  the PIN the kid's browser never receives**. With no PIN set, the review endpoints return
-  `503` (feature disabled). Requests are stored in `data/guardian_requests.json` (gitignored).
+- **Security:** the parent PIN is stored only as a salted hash (`data/guardian_admin.json`) or in
+  `.env`, and is **never** written into `extension/guardian-config.json`. The kid's browser holds
+  `GUARDIAN_TOKEN` and can reach `127.0.0.1:2947`, so submitting/checking a request uses the token,
+  but **approval requires the PIN the kid's browser never receives**. With no PIN configured the
+  review endpoints return `503` and the UI sends the parent to `/setup`. Requests are stored in
+  `data/guardian_requests.json` (gitignored). On a LAN deployment, finish `/setup` before exposing
+  the port — once a PIN exists the setup endpoint is closed (`409`).
 
 ```sh
 # Kid side (token): submit a request, then poll its status.

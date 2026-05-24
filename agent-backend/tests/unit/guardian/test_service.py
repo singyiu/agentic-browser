@@ -21,7 +21,7 @@ _PIN = {"X-Guardian-Parent-Pin": "testpin"}
 _HEADERS = {"X-Guardian-Token": "secret"}
 
 
-def _config(parent_pin: str = "testpin") -> GuardianConfig:
+def _config(parent_pin: str = "testpin", admin_path: str = ":memory:") -> GuardianConfig:
     return GuardianConfig(
         host="127.0.0.1",
         port=2947,
@@ -38,6 +38,7 @@ def _config(parent_pin: str = "testpin") -> GuardianConfig:
         model="m",
         config_dir="/tmp",
         oauth_token="t",
+        admin_path=admin_path,
     )
 
 
@@ -91,6 +92,7 @@ def _client(
     whitelist: object = None,
     request_store: object = None,
     parent_pin: str = "testpin",
+    admin_path: str = ":memory:",
 ) -> TestClient:
     kwargs: dict[str, object] = {}
     if whitelist is not None:
@@ -98,7 +100,7 @@ def _client(
     if request_store is not None:
         kwargs["request_store"] = request_store
     app = create_app(
-        _config(parent_pin=parent_pin),
+        _config(parent_pin=parent_pin, admin_path=admin_path),
         classifier=classifier,
         cache=cache or FakeCache(),
         event_log=log or FakeLog(),
@@ -437,6 +439,62 @@ def test_review_page_served_as_html() -> None:
     resp = _client(FakeClassifier(Verdict("allow"))).get("/review")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
+
+
+# --- first-run setup (no auth; one-shot) ---
+
+
+def test_setup_page_served_as_html() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/setup")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_setup_status_true_when_env_pin_set() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/setup/status")
+    assert resp.status_code == 200
+    assert resp.json() == {"pin_configured": True}
+
+
+def test_setup_status_false_when_unconfigured(tmp_path: Path) -> None:
+    client = _client(
+        FakeClassifier(Verdict("allow")), parent_pin="", admin_path=str(tmp_path / "admin.json")
+    )
+    assert client.get("/setup/status").json() == {"pin_configured": False}
+
+
+def test_setup_pin_sets_pin_and_unlocks_review_without_restart(tmp_path: Path) -> None:
+    client = _client(
+        FakeClassifier(Verdict("allow")), parent_pin="", admin_path=str(tmp_path / "admin.json")
+    )
+    # Review is gated while no PIN is configured.
+    gated = client.get("/review/requests", headers={"X-Guardian-Parent-Pin": "4825"})
+    assert gated.status_code == 503
+    # Create the PIN through the wizard endpoint.
+    assert client.post("/setup/pin", json={"pin": "4825"}).status_code == 200
+    assert client.get("/setup/status").json() == {"pin_configured": True}
+    # The same running app accepts the new PIN immediately — no restart.
+    ok = client.get("/review/requests", headers={"X-Guardian-Parent-Pin": "4825"})
+    assert ok.status_code == 200
+    # A wrong PIN is still rejected.
+    bad = client.get("/review/requests", headers={"X-Guardian-Parent-Pin": "0000"})
+    assert bad.status_code == 403
+
+
+def test_setup_pin_conflict_when_already_configured() -> None:
+    # The default client carries env parent_pin="testpin", i.e. already configured.
+    resp = _client(FakeClassifier(Verdict("allow"))).post("/setup/pin", json={"pin": "4825"})
+    assert resp.status_code == 409
+
+
+def test_setup_pin_rejects_bad_format(tmp_path: Path) -> None:
+    client = _client(
+        FakeClassifier(Verdict("allow")), parent_pin="", admin_path=str(tmp_path / "admin.json")
+    )
+    assert client.post("/setup/pin", json={"pin": "abc"}).status_code == 422
+    assert client.post("/setup/pin", json={"pin": "12"}).status_code == 422
+    # Rejected attempts leave it unconfigured.
+    assert client.get("/setup/status").json() == {"pin_configured": False}
 
 
 # --- review list (PIN-gated) ---

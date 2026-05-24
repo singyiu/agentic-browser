@@ -19,6 +19,7 @@ DEFAULT_EVENT_LOG_PATH = "data/guardian_events.jsonl"
 DEFAULT_WHITELIST_PATH = "data/guardian_whitelist.json"
 DEFAULT_REQUESTS_PATH = "data/guardian_requests.json"
 DEFAULT_PROFILES_PATH = "data/guardian_profiles.json"
+DEFAULT_ADMIN_PATH = "data/guardian_admin.json"
 
 
 def _clean(value: str | None) -> str:
@@ -44,6 +45,8 @@ class GuardianConfig:
     oauth_token: str
     # Path to the teen-profiles registry (JSON). Empty/absent → single "default" profile.
     profiles_path: str = ""
+    # Path to the parent-PIN hash file written by the first-run /setup wizard (PinStore).
+    admin_path: str = DEFAULT_ADMIN_PATH
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> GuardianConfig:
@@ -76,6 +79,7 @@ class GuardianConfig:
             whitelist_path=_clean(e.get("GUARDIAN_WHITELIST_PATH")) or DEFAULT_WHITELIST_PATH,
             requests_path=_clean(e.get("GUARDIAN_REQUESTS_PATH")) or DEFAULT_REQUESTS_PATH,
             profiles_path=_clean(e.get("GUARDIAN_PROFILES_PATH")) or DEFAULT_PROFILES_PATH,
+            admin_path=_clean(e.get("GUARDIAN_ADMIN_PATH")) or DEFAULT_ADMIN_PATH,
             parent_pin=_clean(e.get("GUARDIAN_PARENT_PIN")),
             classify_timeout_s=float(
                 _clean(e.get("GUARDIAN_CLASSIFY_TIMEOUT")) or DEFAULT_TIMEOUT_S
