@@ -1,8 +1,10 @@
-# agent-backend
+# Aegis
 
-Claude-Max-backed agentic browser-control backend for the `agentic-browser` fork.
+Claude-Max-backed agentic browser-control backend for the `agentic-browser` fork — the
+guardian layer that classifies pages, enforces a parental whitelist, and lets a parent approve
+or block what their kid asks to unblock.
 
-It runs an autonomous loop with Claude (your **Claude Max** subscription, via the
+Aegis runs an autonomous loop with Claude (your **Claude Max** subscription, via the
 Claude Agent SDK) that drives a Chromium tab through a **browser-control MCP server**.
 Claude's config/skills are isolated from your personal `~/.claude` via `CLAUDE_CONFIG_DIR`.
 
@@ -241,7 +243,7 @@ goes to `data/guardian.out.log` and `data/guardian.err.log`.
 
 ```sh
 # macOS — status / logs / remove:
-launchctl print "gui/$(id -u)/com.agentic-browser.guardian" | grep -iE 'state|pid'
+launchctl print "gui/$(id -u)/com.aegis.guardian" | grep -iE 'state|pid'
 tail -f data/guardian.out.log data/guardian.err.log
 bash scripts/uninstall-guardian-service.sh
 ```
@@ -255,8 +257,8 @@ bash scripts/uninstall-guardian-service.sh
   installer** so the baked path stays valid.
 - **Restart after editing profiles.** Profiles are read once at startup, so after changing
   `data/guardian_profiles.json` restart the service — macOS:
-  `launchctl kickstart -k "gui/$(id -u)/com.agentic-browser.guardian"`; Linux:
-  `systemctl --user restart agentic-guardian.service`.
+  `launchctl kickstart -k "gui/$(id -u)/com.aegis.guardian"`; Linux:
+  `systemctl --user restart aegis-guardian.service`.
 - **Linux parent boxes.** The same installer writes a systemd `--user` unit from
   `deploy/guardian.systemd.service.template`; run `loginctl enable-linger "$USER"` to keep it running
   without an active login. (Provided for the LAN topology; verified on macOS.)

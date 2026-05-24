@@ -41,7 +41,7 @@ def main() -> None:  # pragma: no cover - process entry point
     app = create_app(config, registry=registry, metrics=metrics)
     start_metrics_server(metrics, config.metrics_port)
     profiles = ", ".join(p.name for p in registry.all())
-    print(f"Guardian listening on http://{config.host}:{config.port} (model: {config.model})")
+    print(f"Aegis guardian listening on http://{config.host}:{config.port} (model: {config.model})")
     print(f"Teen profiles: {profiles}")
     print(f"Prometheus metrics on http://127.0.0.1:{config.metrics_port}/metrics")
     if not PinStore(config.admin_path, env_pin=config.parent_pin).is_configured():

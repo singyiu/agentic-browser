@@ -1,4 +1,4 @@
-# systemd *user* unit template for the agentic-browser guardian (Linux "parent box").
+# systemd *user* unit template for the Aegis guardian (Linux "parent box").
 #
 # This is NOT installed directly. scripts/install-guardian-service.sh fills in the
 # placeholders and writes the result to ~/.config/systemd/user/<name>.service:
@@ -12,7 +12,7 @@
 # (`loginctl enable-linger "$USER"`) if you want it running without an active login session.
 
 [Unit]
-Description=agentic-browser guardian (parental-control classifier)
+Description=Aegis guardian (parental-control classifier)
 After=network-online.target
 Wants=network-online.target
 

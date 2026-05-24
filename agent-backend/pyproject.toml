@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-backend"
+name = "aegis"
 version = "0.1.0"
-description = "Claude-Max-backed agentic browser-control backend for the agentic-browser Chromium fork"
+description = "Aegis — guardian-protected, Claude-Max-backed agentic browser-control backend for the agentic-browser Chromium fork"
 requires-python = ">=3.12"
 dependencies = [
     "claude-agent-sdk",
@@ -26,7 +26,7 @@ dev = [
 ]
 
 [project.scripts]
-agent-backend = "agent_backend.runner.__main__:main"
+aegis = "agent_backend.runner.__main__:main"
 browser-mcp = "agent_backend.mcp_server.__main__:main"
 guardian = "agent_backend.guardian.__main__:main"
 

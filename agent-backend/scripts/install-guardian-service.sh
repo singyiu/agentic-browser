@@ -12,8 +12,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_ROOT="$(dirname "$HERE")"
 PY="$BACKEND_ROOT/.venv/bin/python"
-LABEL="com.agentic-browser.guardian"   # macOS launchd label
-UNIT_NAME="agentic-guardian.service"   # Linux systemd unit name
+LABEL="com.aegis.guardian"   # macOS launchd label
+UNIT_NAME="aegis-guardian.service"   # Linux systemd unit name
 
 # --- Pre-flight ---------------------------------------------------------------
 if [ ! -x "$PY" ]; then

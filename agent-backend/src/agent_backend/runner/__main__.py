@@ -21,7 +21,7 @@ from .agent import run_task
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="agent-backend",
+        prog="aegis",
         description="Run an autonomous browser task with Claude Max (browser-control MCP).",
     )
     parser.add_argument("task", help="Natural-language task for the agent")

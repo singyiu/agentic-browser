@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  macOS LaunchAgent template for the agentic-browser guardian.
+  macOS LaunchAgent template for the Aegis guardian.
 
   This is NOT loaded directly. scripts/install-guardian-service.sh fills in the
   placeholders and writes the result to ~/Library/LaunchAgents/<label>.plist:
-    - the launchd job label (e.g. com.agentic-browser.guardian)
+    - the launchd job label (e.g. com.aegis.guardian)
     - the absolute path to the agent-backend directory
     - the installer's PATH, so the SDK can find `claude` and `node` (launchd's default
       PATH is minimal and would miss nvm/npm bins)
