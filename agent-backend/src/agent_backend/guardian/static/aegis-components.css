@@ -1,0 +1,167 @@
+/* =========================================================================
+   AEGIS COMPONENT LAYER — skins the guardian/extension's EXISTING selectors
+   (bare elements + the class names already used in the markup/JS) with the
+   design tokens. No markup or JS changes are required to pick these up.
+   Adapted from aegis-design-system/ui_kits/shared.css. "Translate, not copy":
+   heading sizes are tuned for these compact admin pages, not the 64px+
+   marketing display scale. Keep byte-identical between guardian/static/ and
+   extension/.
+   ========================================================================= */
+
+/* ----- Headings (display serif; app-appropriate sizes) ----- */
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: var(--weight-regular);
+  color: var(--fg-1);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-snug);
+  margin: 0;
+  text-wrap: balance;
+}
+h1 { font-size: var(--size-2xl); }   /* 30px — page title */
+h2 { font-size: var(--size-lg); }    /* 20px — section header */
+h3 { font-size: var(--size-md); }
+
+.lead { font-size: var(--size-lg); line-height: var(--lh-body); color: var(--fg-2); }
+
+/* ----- Brand lockup (shield image + live "Aegis" wordmark in the serif) ----- */
+.brand { display: inline-flex; align-items: center; gap: 10px; }
+.brand img { display: block; height: 32px; width: auto; }
+.brand .wordmark {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 28px;
+  line-height: 1;
+  color: var(--fg-1);
+}
+
+/* ----- Buttons (bare <button> defaults to secondary; classes override) ----- */
+button {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+  background: var(--bg-2);
+  color: var(--fg-1);
+  box-shadow: inset 0 0 0 1px var(--border-1);
+  transition: background var(--dur-fast) var(--ease-out),
+              transform 80ms var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out);
+}
+button:hover:not(:disabled) { background: var(--aegis-oat); }
+button:active:not(:disabled) { transform: scale(0.98); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+button.primary { background: var(--aegis-terracotta); color: var(--aegis-cream); box-shadow: none; }
+button.primary:hover:not(:disabled) { background: var(--aegis-terracotta-2); }
+
+button.approve { background: var(--aegis-sage); color: var(--aegis-cream); box-shadow: none; }
+button.approve:hover:not(:disabled) { background: color-mix(in oklch, var(--aegis-sage), var(--aegis-cocoa) 12%); }
+
+button.reject, button.reject-confirm {
+  background: transparent;
+  color: var(--aegis-block);
+  box-shadow: inset 0 0 0 1px var(--aegis-block);
+}
+button.reject:hover:not(:disabled),
+button.reject-confirm:hover:not(:disabled) { background: var(--aegis-block-bg); }
+
+button.ghost { background: transparent; color: var(--fg-1); box-shadow: none; }
+button.ghost:hover:not(:disabled) { background: var(--bg-3); }
+
+/* ----- Inputs / textarea ----- */
+input, textarea {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  color: var(--fg-1);
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  padding: 11px 13px;
+  transition: border-color var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out);
+  outline: none;
+}
+input:focus, textarea:focus {
+  border-color: var(--aegis-terracotta);
+  box-shadow: 0 0 0 4px var(--aegis-terracotta-soft);
+  background: var(--aegis-cream);
+}
+textarea { resize: vertical; line-height: 1.5; }
+
+/* ----- Cards ----- */
+.card {
+  background: var(--bg-2);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-soft);
+}
+
+/* ----- Status badges (pills); text colors darkened for AA on pale fills ----- */
+.badge {
+  font-size: var(--size-xs);
+  font-weight: var(--weight-semibold);
+  padding: 4px 11px;
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.badge.approved { color: oklch(0.44 0.10 150); background: var(--aegis-allow-bg); }
+.badge.rejected { color: oklch(0.46 0.16 28);  background: var(--aegis-block-bg); }
+.badge.profile  { color: var(--fg-1); background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--border-1); font-weight: var(--weight-medium); }
+
+/* ----- Inline text links used by the pages ----- */
+.url { color: var(--link); word-break: break-all; text-decoration: none; }
+.url:hover { color: var(--link-hover); text-decoration: underline; text-underline-offset: 3px; }
+.cta { color: var(--link); font-weight: var(--weight-semibold); }
+.cta:hover { color: var(--link-hover); }
+
+/* ----- Helper / status text ----- */
+.muted { color: var(--fg-2); font-size: var(--size-sm); }
+.error { color: var(--aegis-block); min-height: 1.2em; }
+.hint  { color: var(--fg-2); }
+.hint.ok  { color: oklch(0.50 0.09 150); }
+.hint.bad { color: var(--aegis-block); }
+
+/* ----- Toast ----- */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lifted), inset 0 0 0 1px var(--aegis-terracotta-soft);
+  padding: 0.7rem 1.1rem;
+}
+
+/* ----- Recent-decision row (review) ----- */
+.recent-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border-1);
+}
+
+/* ----- Keyboard focus ring (a11y; the handoff defines none) ----- */
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--aegis-terracotta);
+  outline-offset: 2px;
+}
+/* inputs already show a terracotta ring via :focus box-shadow above */
+input:focus-visible, textarea:focus-visible { outline: none; }

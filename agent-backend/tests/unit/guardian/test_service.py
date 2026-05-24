@@ -432,6 +432,21 @@ def test_access_request_status_requires_url() -> None:
     assert resp.status_code == 422
 
 
+# --- shared design-system static assets (no auth) ---
+
+
+def test_static_tokens_css_served() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/static/aegis-tokens.css")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/css")
+
+
+def test_static_components_css_served() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/static/aegis-components.css")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/css")
+
+
 # --- review page (no auth; inert shell) ---
 
 

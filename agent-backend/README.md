@@ -141,6 +141,23 @@ curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/j
   http://127.0.0.1:2947/review/decision
 ```
 
+## Look & feel (Aegis design system)
+
+The guardian's pages (`/setup`, `/review`) and the extension's kid block page share one warm,
+light visual system. Design tokens (color, type, spacing, radius, shadow) and a thin component layer
+live in two stylesheets — `aegis-tokens.css` + `aegis-components.css` — that skin the pages' existing
+markup, so no page JS changes when the look changes. They are kept **byte-identical** in two places
+because the guardian and the extension ship as separate units with no build step:
+
+- served by the guardian under `/static/…` (`src/agent_backend/guardian/static/`), linked by
+  `setup.html` / `review.html` (Starlette `StaticFiles` mount in `service.py`);
+- bundled in `extension/`, linked by `block.html`.
+
+Fonts (Manrope, Instrument Serif, JetBrains Mono) are **self-hosted** under each `fonts/` dir — no
+Google Fonts or other third-party calls, so the pages render fully offline. The canonical token source
+is `aegis-design-system/colors_and_type.css` at the repo root; if you edit tokens there, copy the two
+`aegis-*.css` files into both locations to keep them in sync.
+
 ## Running the browser and guardian on different computers (LAN)
 
 By default everything runs on one machine (`localhost`). You can instead run the **guardian on the

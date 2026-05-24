@@ -2,10 +2,14 @@
 // the page out and replaces it with the block page.
 
 function extractContent() {
-  const meta = (selector) => document.querySelector(selector)?.getAttribute("content") || "";
+  const meta = (selector) =>
+    document.querySelector(selector)?.getAttribute("content") || "";
   let body = "";
   try {
-    body = (document.body?.innerText || "").replace(/\s+/g, " ").trim().slice(0, 2000);
+    body = (document.body?.innerText || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 2000);
   } catch (_e) {
     body = "";
   }
@@ -23,20 +27,26 @@ function extractContent() {
   try {
     if (location.hostname.endsWith("youtube.com") && window.ytInitialData) {
       const contents =
-        window.ytInitialData?.contents?.twoColumnWatchNextResults?.results?.results?.contents;
+        window.ytInitialData?.contents?.twoColumnWatchNextResults?.results
+          ?.results?.contents;
       if (Array.isArray(contents)) {
-        const primary = contents.find((c) => c.videoPrimaryInfoRenderer)?.videoPrimaryInfoRenderer;
-        const secondary = contents.find((c) => c.videoSecondaryInfoRenderer)
-          ?.videoSecondaryInfoRenderer;
+        const primary = contents.find(
+          (c) => c.videoPrimaryInfoRenderer,
+        )?.videoPrimaryInfoRenderer;
+        const secondary = contents.find(
+          (c) => c.videoSecondaryInfoRenderer,
+        )?.videoSecondaryInfoRenderer;
         const title = primary?.title?.runs?.[0]?.text;
-        const channel = secondary?.owner?.videoOwnerRenderer?.title?.runs?.[0]?.text;
+        const channel =
+          secondary?.owner?.videoOwnerRenderer?.title?.runs?.[0]?.text;
         const desc =
           secondary?.attributedDescription?.content ||
           secondary?.description?.runs?.map((r) => r.text).join("") ||
           "";
         if (title) data.title = title;
         if (channel) data.og_title = `Channel: ${channel}`;
-        if (desc) data.body_snippet = `${desc} ${data.body_snippet}`.slice(0, 2000);
+        if (desc)
+          data.body_snippet = `${desc} ${data.body_snippet}`.slice(0, 2000);
       }
     }
   } catch (_e) {
@@ -52,7 +62,7 @@ function ensureOverlay() {
   const el = document.createElement("div");
   el.id = "__guardian_overlay";
   el.style.cssText =
-    "position:fixed;inset:0;z-index:2147483647;background:#101426;opacity:0;" +
+    "position:fixed;inset:0;z-index:2147483647;background:#faf5ed;opacity:0;" +
     "transition:opacity .3s ease;pointer-events:none;";
   (document.documentElement || document.body).appendChild(el);
   overlayEl = el;

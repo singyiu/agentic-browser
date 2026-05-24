@@ -13,7 +13,8 @@ from typing import Any
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
 from ..config import ConfigError
 from .access_requests import RequestStore
@@ -546,6 +547,14 @@ def create_app(
             Route("/review", review_page, methods=["GET"]),
             Route("/review/requests", review_requests, methods=["GET"]),
             Route("/review/decision", review_decision, methods=["POST"]),
+            # Shared design-system assets (tokens, component CSS, self-hosted fonts, brand
+            # SVG) for the served pages. No auth — purely static, public styling like the
+            # page shells themselves. The /static prefix never shadows the exact routes above.
+            Mount(
+                "/static",
+                app=StaticFiles(directory=Path(__file__).parent / "static"),
+                name="static",
+            ),
         ]
     )
     app.state.config = config

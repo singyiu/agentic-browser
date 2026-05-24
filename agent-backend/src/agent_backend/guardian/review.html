@@ -4,88 +4,41 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <title>Guardian — review requests</title>
+    <title>Aegis — review requests</title>
+    <link rel="stylesheet" href="/static/aegis-tokens.css" />
+    <link rel="stylesheet" href="/static/aegis-components.css" />
     <style>
-      :root {
-        --bg: #101426;
-        --card: #1a2138;
-        --line: #2a3357;
-        --text: #e7e9f0;
-        --muted: #b9c0d6;
-        --accent: #8ab4ff;
-        --ok: #6ee7a8;
-        --bad: #ff9b9b;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      }
-      main { max-width: 760px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
-      h1 { font-size: 1.4rem; }
-      h2 { font-size: 1.05rem; color: var(--muted); margin: 1.75rem 0 0.75rem; }
+      /* Page-specific layout only — the shared look comes from the linked stylesheets. */
+      main { max-width: 760px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+      .brand { margin-bottom: 1.25rem; }
+      h2 { margin: 1.75rem 0 0.75rem; }
+      .card { margin-bottom: 0.85rem; }
       .row { display: flex; gap: 0.5rem; }
-      input, textarea, button {
-        font: inherit;
-        border-radius: 8px;
-        border: 1px solid var(--line);
-        background: #0c1020;
-        color: var(--text);
-        padding: 0.5rem 0.65rem;
-      }
-      input:focus, textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
-      button { cursor: pointer; border-color: var(--accent); background: #14203c; }
-      button:hover { background: #1b2c52; }
-      button.approve { border-color: var(--ok); }
-      button.reject, button.reject-confirm { border-color: var(--bad); }
-      .card {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 1rem;
-        margin-bottom: 0.85rem;
-      }
       .head { display: flex; justify-content: space-between; gap: 0.75rem; align-items: baseline; }
-      .url { color: var(--accent); word-break: break-all; text-decoration: none; }
-      .url:hover { text-decoration: underline; }
-      .host { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+      .host { color: var(--fg-2); font-size: 0.85rem; white-space: nowrap; }
       .reason, .note { margin: 0.4rem 0; }
-      .note { color: var(--muted); }
-      .muted { color: var(--muted); font-size: 0.82rem; }
-      .entry-label { display: block; margin: 0.6rem 0 0.25rem; color: var(--muted); font-size: 0.85rem; }
+      .note { color: var(--fg-2); }
+      .entry-label { display: block; margin: 0.75rem 0 0.35rem; color: var(--fg-2); font-size: 0.85rem; }
       input.entry { width: 100%; }
       .actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
       textarea.reject-note { width: 100%; margin-top: 0.5rem; }
       button.reject-confirm { margin-top: 0.5rem; }
-      .error { color: var(--bad); min-height: 1.2em; }
-      .recent-row {
-        display: flex; gap: 0.6rem; align-items: center;
-        padding: 0.4rem 0; border-bottom: 1px solid var(--line);
-      }
-      .badge { border-radius: 999px; padding: 0.05rem 0.55rem; font-size: 0.78rem; }
-      .badge.approved { background: rgba(110, 231, 168, 0.18); color: var(--ok); }
-      .badge.rejected { background: rgba(255, 155, 155, 0.18); color: var(--bad); }
-      .badge.profile { background: rgba(138, 180, 255, 0.15); color: var(--accent); }
       .meta { display: flex; gap: 0.4rem; align-items: center; white-space: nowrap; }
-      #toast {
-        position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%);
-        background: #14203c; border: 1px solid var(--accent); border-radius: 8px;
-        padding: 0.6rem 1rem;
-      }
-      [hidden] { display: none !important; }
     </style>
   </head>
   <body>
     <main>
-      <h1>🛡️ Access requests</h1>
+      <header class="brand">
+        <img src="/static/aegis-shield.svg" alt="" />
+        <span class="wordmark">Aegis</span>
+      </header>
+      <h1>Access requests</h1>
 
       <section id="pin-panel">
         <p class="muted">Enter the parent PIN to review what your kid asked to unblock.</p>
         <div class="row">
           <input id="pin" type="password" placeholder="Parent PIN" autocomplete="off" />
-          <button id="pin-btn" type="button">Unlock</button>
+          <button id="pin-btn" class="primary" type="button">Unlock</button>
         </div>
         <p id="pin-error" class="error"></p>
       </section>

@@ -15,7 +15,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["block.html", "block.js", "block.css", "guardian-config.json"],
+      "resources": ["block.html", "block.js", "block.css", "guardian-config.json", "aegis-tokens.css", "aegis-components.css", "aegis-shield.svg", "fonts/*"],
       "matches": ["<all_urls>"]
     }
   ],

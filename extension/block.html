@@ -4,11 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Page blocked</title>
+    <link rel="stylesheet" href="aegis-tokens.css" />
+    <link rel="stylesheet" href="aegis-components.css" />
     <link rel="stylesheet" href="block.css" />
   </head>
   <body>
     <main class="card">
-      <div class="shield">🛡️</div>
+      <div class="brand">
+        <img src="aegis-shield.svg" alt="" />
+        <span class="wordmark">Aegis</span>
+      </div>
       <h1>This page isn't available</h1>
       <p id="reason">This page may not be suitable.</p>
       <p class="url" id="url"></p>
@@ -20,8 +25,8 @@
           maxlength="500"
           placeholder="Optional: tell your parent why (e.g. it's for homework)"
         ></textarea>
-        <button id="request-btn" type="button">Request access</button>
-        <button id="check-btn" type="button" hidden>Check if approved</button>
+        <button id="request-btn" class="primary" type="button">Request access</button>
+        <button id="check-btn" class="primary" type="button" hidden>Check if approved</button>
         <p id="request-status"></p>
       </div>
     </main>

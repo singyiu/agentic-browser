@@ -4,75 +4,31 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <title>Guardian — first-time setup</title>
+    <title>Aegis — first-time setup</title>
+    <link rel="stylesheet" href="/static/aegis-tokens.css" />
+    <link rel="stylesheet" href="/static/aegis-components.css" />
     <style>
-      :root {
-        --bg: #101426;
-        --card: #1a2138;
-        --line: #2a3357;
-        --text: #e7e9f0;
-        --muted: #b9c0d6;
-        --accent: #8ab4ff;
-        --ok: #6ee7a8;
-        --bad: #ff9b9b;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      }
-      main { max-width: 520px; margin: 0 auto; padding: 2rem 1rem 4rem; }
-      h1 { font-size: 1.4rem; }
-      p.lead { color: var(--muted); }
-      .card {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 1.25rem;
-        margin-bottom: 1rem;
-      }
-      label.field { display: block; margin: 0.9rem 0 0.3rem; color: var(--muted); font-size: 0.9rem; }
+      /* Page-specific layout only — the shared look comes from the linked stylesheets. */
+      main { max-width: 520px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+      .brand { margin-bottom: 1.25rem; }
+      label.field { display: block; margin: 0.9rem 0 0.3rem; color: var(--fg-2); font-size: 0.9rem; font-weight: 600; }
       label.field:first-child { margin-top: 0; }
       .pin-row { display: flex; gap: 0.5rem; }
-      input {
-        font: inherit;
-        width: 100%;
-        border-radius: 8px;
-        border: 1px solid var(--line);
-        background: #0c1020;
-        color: var(--text);
-        padding: 0.55rem 0.7rem;
-        letter-spacing: 0.25em;
-      }
-      input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
-      button {
-        font: inherit;
-        cursor: pointer;
-        border-radius: 8px;
-        border: 1px solid var(--accent);
-        background: #14203c;
-        color: var(--text);
-        padding: 0.55rem 0.9rem;
-        white-space: nowrap;
-      }
-      button:hover:not(:disabled) { background: #1b2c52; }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
-      button.primary { width: 100%; margin-top: 1.1rem; border-color: var(--ok); }
-      button.ghost { border-color: var(--line); background: transparent; }
-      .hint { font-size: 0.82rem; margin: 0.35rem 0 0; color: var(--muted); min-height: 1.1em; }
-      .hint.ok { color: var(--ok); }
-      .hint.bad { color: var(--bad); }
-      .error { color: var(--bad); min-height: 1.2em; margin-top: 0.6rem; }
-      a.cta { color: var(--accent); }
+      input { width: 100%; }
+      #pin, #confirm { letter-spacing: 0.25em; }
+      button.primary { width: 100%; margin-top: 1.1rem; }
+      .hint { font-size: 0.82rem; margin: 0.35rem 0 0; min-height: 1.1em; }
+      .error { margin-top: 0.6rem; }
       .success-icon { font-size: 2.2rem; margin: 0; }
-      [hidden] { display: none !important; }
     </style>
   </head>
   <body>
     <main>
-      <h1>🛡️ Guardian setup</h1>
+      <header class="brand">
+        <img src="/static/aegis-shield.svg" alt="" />
+        <span class="wordmark">Aegis</span>
+      </header>
+      <h1>First-time setup</h1>
 
       <section id="loading-panel">
         <p class="lead">Loading…</p>
