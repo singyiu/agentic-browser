@@ -447,22 +447,54 @@ def test_static_components_css_served() -> None:
     assert resp.headers["content-type"].startswith("text/css")
 
 
-# --- review page (no auth; inert shell) ---
+# --- home page (app shell; first-run redirect) ---
 
 
-def test_review_page_served_as_html() -> None:
-    resp = _client(FakeClassifier(Verdict("allow"))).get("/review")
+def test_home_page_redirects_to_setup_when_unconfigured(tmp_path: Path) -> None:
+    client = _client(
+        FakeClassifier(Verdict("allow")), parent_pin="", admin_path=str(tmp_path / "admin.json")
+    )
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/setup"
+
+
+def test_home_page_serves_html_when_configured() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
+
+
+def test_home_page_contains_shell_markup() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/")
+    assert b"app-shell" in resp.content
+
+
+# --- review page (now redirects into the shell) ---
+
+
+def test_review_page_redirects_to_hash_requests() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/review", follow_redirects=False)
+    assert resp.status_code == 302
+    assert "/#/requests" in resp.headers["location"]
 
 
 # --- first-run setup (no auth; one-shot) ---
 
 
-def test_setup_page_served_as_html() -> None:
-    resp = _client(FakeClassifier(Verdict("allow"))).get("/setup")
+def test_setup_page_served_as_html(tmp_path: Path) -> None:
+    client = _client(
+        FakeClassifier(Verdict("allow")), parent_pin="", admin_path=str(tmp_path / "admin.json")
+    )
+    resp = client.get("/setup")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
+
+
+def test_setup_page_redirects_to_home_when_already_configured() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/setup", follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/"
 
 
 def test_setup_status_true_when_env_pin_set() -> None:

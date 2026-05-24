@@ -12,7 +12,7 @@ from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -414,8 +414,18 @@ def create_app(
         metrics.record_access_request(host)
         return JSONResponse({"id": req.id, "status": req.status})
 
-    async def setup_page(_request: Request) -> FileResponse:
+    async def home_page(_request: Request) -> Response:
+        # The parent app shell. On first run there is no PIN and nothing to show, so route to
+        # the setup wizard. The redirect is server-side so it holds even with JS disabled.
+        if not pin_store.is_configured():
+            return RedirectResponse("/setup", status_code=302)
+        return FileResponse(Path(__file__).parent / "home.html", media_type="text/html")
+
+    async def setup_page(_request: Request) -> Response:
         # First-run wizard. No auth: there is no PIN/token to present yet (like /health).
+        # Once a PIN exists there is nothing to set up — send the parent to the shell.
+        if pin_store.is_configured():
+            return RedirectResponse("/", status_code=302)
         return FileResponse(Path(__file__).parent / "setup.html", media_type="text/html")
 
     async def setup_status(_request: Request) -> JSONResponse:
@@ -442,9 +452,10 @@ def create_app(
         event_log.log("parent_pin_set")  # records the event, never the PIN value
         return JSONResponse({"ok": True})
 
-    async def review_page(_request: Request) -> FileResponse:
-        # Inert HTML shell (no secrets); the data + actions below require the PIN.
-        return FileResponse(Path(__file__).parent / "review.html", media_type="text/html")
+    async def review_page(_request: Request) -> RedirectResponse:
+        # Folded into the app shell: keep the /review bookmark working by routing into the
+        # Requests section. The "#/requests" fragment is read client-side; the server sees "/".
+        return RedirectResponse("/#/requests", status_code=302)
 
     async def review_requests(request: Request) -> JSONResponse:
         guard = _require_pin(request)
@@ -536,6 +547,7 @@ def create_app(
 
     app = Starlette(
         routes=[
+            Route("/", home_page, methods=["GET"]),
             Route("/health", health),
             Route("/classify", classify, methods=["POST"]),
             Route("/dwell", dwell, methods=["POST"]),
