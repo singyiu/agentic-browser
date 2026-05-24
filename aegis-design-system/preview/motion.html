@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="card.css">
+<style>
+@keyframes drift { 0%{transform:translateX(0)} 50%{transform:translateX(160px)} 100%{transform:translateX(0)} }
+.dot { width:24px; height:24px; border-radius:999px; background:var(--aegis-terracotta); animation: drift 2.4s var(--ease-out) infinite; }
+.dot.med { animation-duration: 1.6s; }
+.dot.fast { animation-duration: 0.9s; }
+</style>
+</head><body><div class="card">
+<div class="label">Motion — calm ease-out, no springs</div>
+<div style="display:flex; flex-direction:column; gap:10px; margin-top:4px">
+  <div style="display:flex; align-items:center; gap:14px"><span style="font-family:var(--font-mono); font-size:11px; color:var(--fg-2); width:130px">fast · 160ms</span><div class="dot fast"></div></div>
+  <div style="display:flex; align-items:center; gap:14px"><span style="font-family:var(--font-mono); font-size:11px; color:var(--fg-2); width:130px">med · 220ms</span><div class="dot med"></div></div>
+  <div style="display:flex; align-items:center; gap:14px"><span style="font-family:var(--font-mono); font-size:11px; color:var(--fg-2); width:130px">slow · 320ms</span><div class="dot"></div></div>
+  <div style="font-family:var(--font-mono); font-size:11px; color:var(--fg-2); margin-top:4px">--ease-out: cubic-bezier(0.2, 0.7, 0.2, 1)</div>
+</div>
+</div></body></html>

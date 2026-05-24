@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="card.css">
+<style>
+.field { display:flex; flex-direction:column; gap:6px; }
+.field label { font-size:13px; font-weight:600; color:var(--fg-1); }
+.field .hint { font-size:12px; color:var(--fg-2); }
+.input, .textarea { font-family:var(--font-sans); font-size:15px; color:var(--fg-1); background:var(--bg-2); border:1px solid var(--border-1); border-radius:12px; padding:12px 14px; transition: all 160ms var(--ease-out); outline:none; }
+.input:focus, .textarea:focus { border-color:var(--aegis-terracotta); box-shadow: 0 0 0 4px var(--aegis-terracotta-soft); background:var(--aegis-cream); }
+.textarea { resize:none; min-height:64px; line-height:1.5; }
+</style>
+</head><body><div class="card">
+<div class="label">Form inputs</div>
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px">
+  <div class="field"><label>Whitelist entry</label><input class="input" value="www.youtube.com/results*"><span class="hint">URL, wildcard pattern, or natural-language topic.</span></div>
+  <div class="field"><label>Note to your parent</label><textarea class="textarea">for my history project — found this in the search</textarea></div>
+</div>
+</div></body></html>

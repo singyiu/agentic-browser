@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="card.css">
+<style>
+.pill { font-family:var(--font-sans); font-size:12px; font-weight:600; padding:6px 12px; border-radius:999px; display:inline-flex; align-items:center; gap:6px; }
+.dot { width:7px; height:7px; border-radius:999px; }
+.allow   { color:var(--aegis-sage); background:var(--aegis-allow-bg); }
+.allow .dot { background:var(--aegis-sage); }
+.pending { color:oklch(0.42 0.10 70); background:var(--aegis-pending-bg); }
+.pending .dot { background:var(--aegis-ochre); }
+.block   { color:var(--aegis-block); background:var(--aegis-block-bg); }
+.block .dot { background:var(--aegis-block); }
+.neutral { color:var(--fg-2); background:var(--bg-3); }
+.neutral .dot { background:var(--fg-2); }
+.tag { color:var(--fg-1); background:var(--bg-2); box-shadow: inset 0 0 0 1px var(--border-1); font-weight:500; }
+</style>
+</head><body><div class="card">
+<div class="label">Badges & status pills</div>
+<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center">
+  <span class="pill allow"><span class="dot"></span>Approved</span>
+  <span class="pill pending"><span class="dot"></span>Pending</span>
+  <span class="pill block"><span class="dot"></span>Blocked</span>
+  <span class="pill neutral"><span class="dot"></span>Whitelisted</span>
+  <span class="pill tag">alex</span>
+  <span class="pill tag">sam</span>
+  <span class="pill tag">not on the whitelist yet</span>
+  <span class="pill tag">2 min ago</span>
+</div>
+</div></body></html>
