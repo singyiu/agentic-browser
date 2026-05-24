@@ -7,9 +7,199 @@
     <title>Aegis</title>
     <link rel="stylesheet" href="/static/aegis-tokens.css" />
     <link rel="stylesheet" href="/static/aegis-components.css" />
+    <link rel="stylesheet" href="/static/aegis-shell.css" />
   </head>
   <body>
-    <!-- The parent app shell (sidebar + sections) is built up over the following steps. -->
-    <div id="app-shell"></div>
+    <!-- Parent PIN gate: shown until the parent unlocks (the page is only ever
+         served once a PIN exists; / redirects to /setup before then). -->
+    <div id="pin-gate" class="pin-gate">
+      <div class="card pin-gate__card">
+        <header class="brand">
+          <img src="/static/aegis-shield.svg" alt="" />
+          <span class="wordmark">Aegis</span>
+        </header>
+        <h1>Parent access</h1>
+        <p class="muted">Enter the parent PIN to manage what your kid can see.</p>
+        <input
+          id="gate-pin"
+          type="password"
+          inputmode="numeric"
+          autocomplete="current-password"
+          maxlength="8"
+          placeholder="Parent PIN"
+        />
+        <p id="gate-error" class="error"></p>
+        <button id="gate-btn" class="primary pin-gate__btn" type="button">Unlock</button>
+      </div>
+    </div>
+
+    <!-- App shell: revealed after unlock. -->
+    <div id="app-shell" class="app-shell" hidden>
+      <div id="shell-backdrop" class="shell-backdrop"></div>
+
+      <aside id="sidebar" class="sidebar" aria-label="Primary">
+        <header class="brand sidebar__brand">
+          <img src="/static/aegis-shield.svg" alt="" />
+          <span class="wordmark sidebar__wordmark">Aegis</span>
+        </header>
+
+        <nav aria-label="Sections">
+          <ul class="sidebar__nav" role="list">
+            <li>
+              <a id="nav-dashboard" class="nav-item" href="#/dashboard">
+                <span class="nav-item__icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect width="7" height="7" x="3" y="3" rx="1" />
+                    <rect width="7" height="7" x="14" y="3" rx="1" />
+                    <rect width="7" height="7" x="14" y="14" rx="1" />
+                    <rect width="7" height="7" x="3" y="14" rx="1" />
+                  </svg>
+                </span>
+                <span class="nav-item__label">Dashboard</span>
+              </a>
+            </li>
+            <li>
+              <a id="nav-requests" class="nav-item" href="#/requests">
+                <span class="nav-item__icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+                    <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+                  </svg>
+                </span>
+                <span class="nav-item__label">Requests</span>
+              </a>
+            </li>
+            <li>
+              <a id="nav-whitelist" class="nav-item" href="#/whitelist">
+                <span class="nav-item__icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+                    <path d="m9 12 2 2 4-4" />
+                  </svg>
+                </span>
+                <span class="nav-item__label">Whitelist</span>
+              </a>
+            </li>
+            <li>
+              <a id="nav-settings" class="nav-item" href="#/settings">
+                <span class="nav-item__icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="21" x2="14" y1="4" y2="4" />
+                    <line x1="10" x2="3" y1="4" y2="4" />
+                    <line x1="21" x2="12" y1="12" y2="12" />
+                    <line x1="8" x2="3" y1="12" y2="12" />
+                    <line x1="21" x2="16" y1="20" y2="20" />
+                    <line x1="12" x2="3" y1="20" y2="20" />
+                    <line x1="14" x2="14" y1="2" y2="6" />
+                    <line x1="8" x2="8" y1="10" y2="14" />
+                    <line x1="16" x2="16" y1="18" y2="22" />
+                  </svg>
+                </span>
+                <span class="nav-item__label">Settings</span>
+              </a>
+            </li>
+          </ul>
+        </nav>
+
+        <div class="sidebar__footer">
+          <button
+            id="sidebar-collapse"
+            class="nav-item sidebar__collapse"
+            type="button"
+            aria-label="Collapse sidebar"
+            aria-controls="sidebar"
+            aria-expanded="true"
+          >
+            <span class="nav-item__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m11 17-5-5 5-5" />
+                <path d="m18 17-5-5 5-5" />
+              </svg>
+            </span>
+            <span class="nav-item__label">Collapse</span>
+          </button>
+          <button id="lock-btn" class="nav-item" type="button">
+            <span class="nav-item__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </span>
+            <span class="nav-item__label">Lock</span>
+          </button>
+        </div>
+      </aside>
+
+      <button
+        id="shell-toggle"
+        class="shell-toggle"
+        type="button"
+        aria-label="Open menu"
+        aria-controls="sidebar"
+        aria-expanded="false"
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="4" x2="20" y1="12" y2="12" />
+          <line x1="4" x2="20" y1="6" y2="6" />
+          <line x1="4" x2="20" y1="18" y2="18" />
+        </svg>
+      </button>
+
+      <main class="shell-main">
+        <div class="shell-col">
+          <section id="sec-dashboard" class="shell-section" tabindex="-1" aria-label="Dashboard" hidden>
+            <h1>Dashboard</h1>
+            <div id="dash-tiles" class="dash-tiles"></div>
+          </section>
+
+          <section id="sec-requests" class="shell-section" tabindex="-1" aria-label="Requests" hidden>
+            <h1>Requests</h1>
+            <h2>Pending</h2>
+            <div id="req-pending-list"></div>
+            <p id="req-pending-empty" class="muted" hidden>No pending requests.</p>
+            <h2>Recent decisions</h2>
+            <div id="req-recent-list"></div>
+            <p id="req-recent-empty" class="muted" hidden>Nothing decided yet.</p>
+          </section>
+
+          <section id="sec-whitelist" class="shell-section" tabindex="-1" aria-label="Whitelist" hidden>
+            <h1>Whitelist</h1>
+            <div class="card">
+              <label class="settings-field" for="wl-entry">Add an allowed site or topic</label>
+              <div class="wl-add">
+                <input
+                  id="wl-entry"
+                  type="text"
+                  maxlength="512"
+                  placeholder="e.g. example.com, host/*, or “BeyBlade anime”"
+                />
+                <button id="wl-add-btn" class="primary" type="button">Add</button>
+              </div>
+              <p id="wl-hint" class="hint" aria-live="polite"></p>
+            </div>
+            <div id="wl-list"></div>
+            <p id="wl-empty" class="muted" hidden>No whitelist entries yet.</p>
+          </section>
+
+          <section id="sec-settings" class="shell-section" tabindex="-1" aria-label="Settings" hidden>
+            <h1>Settings</h1>
+            <div class="card settings-card">
+              <h2>Change PIN</h2>
+              <label class="settings-field" for="set-pin-current">Current PIN</label>
+              <input id="set-pin-current" type="password" inputmode="numeric" autocomplete="current-password" maxlength="8" />
+              <label class="settings-field" for="set-pin-new">New PIN</label>
+              <input id="set-pin-new" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" />
+              <label class="settings-field" for="set-pin-confirm">Confirm new PIN</label>
+              <input id="set-pin-confirm" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" />
+              <p id="set-pin-hint" class="hint" aria-live="polite"></p>
+              <button id="set-pin-btn" class="primary" type="button">Change PIN</button>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div id="toast" hidden></div>
+    <script src="/static/shell.js"></script>
   </body>
 </html>

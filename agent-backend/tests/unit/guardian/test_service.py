@@ -532,6 +532,12 @@ def test_static_shell_css_served() -> None:
     assert resp.headers["content-type"].startswith("text/css")
 
 
+def test_static_shell_js_served() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/static/shell.js")
+    assert resp.status_code == 200
+    assert "javascript" in resp.headers["content-type"]
+
+
 # --- home page (app shell; first-run redirect) ---
 
 
