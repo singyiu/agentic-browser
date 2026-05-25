@@ -26,16 +26,32 @@
 
   function profileCard(p) {
     const card = el("div", { class: "card prof-card" });
+    const name = p.is_global ? "Global — all kids" : p.name;
     const counts =
-      p.whitelist_count + " allowed · " + p.pending_count + " pending";
+      p.whitelist_count +
+      " allowed · " +
+      p.blocklist_count +
+      " blocked" +
+      (p.is_global ? "" : " · " + p.pending_count + " pending");
     card.append(
       el(
         "div",
         { class: "prof-card__head" },
-        el("span", { class: "prof-card__name", text: p.name }),
+        el("span", { class: "prof-card__name", text: name }),
         el("span", { class: "muted", text: counts }),
       ),
     );
+
+    // Global is a shared, tokenless profile: no browser, so no rename/token/delete controls.
+    if (p.is_global) {
+      card.append(
+        el("p", {
+          class: "muted",
+          text: "Applies to every kid, checked after each kid's own rules. Edit its allow/block lists in the Lists section.",
+        }),
+      );
+      return card;
+    }
 
     const rename = el("button", {
       class: "ghost",

@@ -114,7 +114,8 @@ rules above.
 - **Parent dashboard:** open `http://127.0.0.1:2947/` and enter your PIN. A collapsible sidebar
   holds **Dashboard** (at-a-glance counts), **Profiles** (create/rename/delete each kid and mint
   their browser token — see *Multiple teen profiles* below), **Requests** (the review queue —
-  `/review` now redirects here), **Whitelist** (per-profile allowed sites and topics), and
+  `/review` now redirects here), **Lists** (per-profile and Global allow + block lists; a kid's
+  own rule beats Global, and a blocklisted site/topic is hard-blocked), and
   **Settings** (change the PIN). Pending requests show the URL, why it was blocked, the kid's note,
   and an **editable
   "allow" field pre-filled with the URL** — broaden it to a section (`youtube.com/results*`) or a
@@ -144,8 +145,11 @@ curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/j
   -d '{"id":"req_…","decision":"approve","whitelist_entry":"BeyBlade anime"}' \
   http://127.0.0.1:2947/review/decision
 
-# Parent side: manage the whitelist and rotate the PIN (both PIN-gated).
+# Parent side: manage the allow + block lists and rotate the PIN (all PIN-gated).
+# /review/whitelist and /review/blocklist take {entry, profile}; profile "global" = all kids.
 curl -s -H "X-Guardian-Parent-Pin: $PIN" http://127.0.0.1:2947/review/whitelist
+curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/json' \
+  -d '{"entry":"tiktok.com","profile":"global"}' http://127.0.0.1:2947/review/blocklist
 curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/json' \
   -d '{"current_pin":"'"$PIN"'","new_pin":"4321"}' http://127.0.0.1:2947/settings/pin
 

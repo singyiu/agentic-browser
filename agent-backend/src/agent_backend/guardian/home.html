@@ -130,7 +130,7 @@
                     <path d="m9 12 2 2 4-4" />
                   </svg>
                 </span>
-                <span class="nav-item__label">Whitelist</span>
+                <span class="nav-item__label">Lists</span>
               </a>
             </li>
             <li>
@@ -305,15 +305,23 @@
             id="sec-whitelist"
             class="shell-section"
             tabindex="-1"
-            aria-label="Whitelist"
+            aria-label="Allow and block lists"
             hidden
           >
-            <h1>Whitelist</h1>
+            <h1>Allow &amp; block lists</h1>
             <div class="card">
               <label class="settings-field" for="wl-profile">Profile</label>
               <select id="wl-profile" class="wl-profile-select"></select>
+              <p class="muted">
+                Editing lists for <strong id="ls-active">…</strong> — a kid's
+                own rules win over Global.
+              </p>
+            </div>
+
+            <h2>Allow list</h2>
+            <div class="card">
               <label class="settings-field" for="wl-entry"
-                >Add an allowed site or topic</label
+                >Allow a site or topic</label
               >
               <div class="wl-add">
                 <input
@@ -329,7 +337,28 @@
               <p id="wl-hint" class="hint" aria-live="polite"></p>
             </div>
             <div id="wl-list"></div>
-            <p id="wl-empty" class="muted" hidden>No whitelist entries yet.</p>
+            <p id="wl-empty" class="muted" hidden>No allow entries yet.</p>
+
+            <h2>Block list</h2>
+            <div class="card">
+              <label class="settings-field" for="bl-entry"
+                >Block a site or topic</label
+              >
+              <div class="wl-add">
+                <input
+                  id="bl-entry"
+                  type="text"
+                  maxlength="512"
+                  placeholder="e.g. tiktok.com, host/watch*, or “online gambling”"
+                />
+                <button id="bl-add-btn" class="primary" type="button">
+                  Add
+                </button>
+              </div>
+              <p id="bl-hint" class="hint" aria-live="polite"></p>
+            </div>
+            <div id="bl-list"></div>
+            <p id="bl-empty" class="muted" hidden>No block entries yet.</p>
           </section>
 
           <section

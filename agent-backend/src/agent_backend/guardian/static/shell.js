@@ -125,8 +125,29 @@
     return tile;
   }
 
-  /* Whitelist — parent view of allowed sites/topics via /review/whitelist, scoped to the
-     profile chosen in #wl-profile (a parent write must name which teen it targets). */
+  /* Allow & block lists — parent view via /review/whitelist + /review/blocklist, scoped to
+     the profile chosen in #wl-profile (which also offers "Global — all kids"). A parent write
+     must name which profile it targets. The two lists are identical except for the endpoint
+     and the type badge, so one config object drives both. */
+  const ALLOW = {
+    endpoint: "/review/whitelist",
+    list: "wl-list",
+    empty: "wl-empty",
+    entry: "wl-entry",
+    hint: "wl-hint",
+    badgeClass: "badge profile",
+    verb: "allow",
+  };
+  const BLOCK = {
+    endpoint: "/review/blocklist",
+    list: "bl-list",
+    empty: "bl-empty",
+    entry: "bl-entry",
+    hint: "bl-hint",
+    badgeClass: "badge rejected",
+    verb: "block",
+  };
+
   async function populateProfileSelect() {
     let r;
     try {
@@ -135,42 +156,60 @@
       return;
     }
     if (!r.ok) return;
-    const names = ((await r.json()).profiles || []).map((p) => p.name);
+    const profiles = (await r.json()).profiles || [];
     const sel = $("wl-profile");
     const prev = sel.value;
     sel.replaceChildren(
-      ...names.map((n) => el("option", { value: n, text: n })),
+      ...profiles.map((p) =>
+        el("option", {
+          value: p.name,
+          text: p.is_global ? "Global — all kids" : p.name,
+        }),
+      ),
     );
-    if (names.includes(prev)) sel.value = prev;
+    if (profiles.some((p) => p.name === prev)) sel.value = prev;
+    updateActiveProfileLabel();
   }
 
-  async function loadWhitelist() {
+  function updateActiveProfileLabel() {
+    const sel = $("wl-profile");
+    const label = $("ls-active");
+    if (label)
+      label.textContent =
+        sel.options[sel.selectedIndex]?.text || sel.value || "—";
+  }
+
+  async function loadLists() {
     await populateProfileSelect();
-    let r;
+    const profile = $("wl-profile").value;
+    let wl, bl;
     try {
-      r = await api("/review/whitelist");
+      [wl, bl] = await Promise.all([api(ALLOW.endpoint), api(BLOCK.endpoint)]);
     } catch (_e) {
       toast("Could not reach the guardian service.");
       return;
     }
-    if (!r.ok) return;
-    const all = (await r.json()).entries || [];
-    const profile = $("wl-profile").value;
-    renderWhitelist(profile ? all.filter((e) => e.profile === profile) : all);
+    if (wl.ok) renderList(ALLOW, byProfile((await wl.json()).entries, profile));
+    if (bl.ok) renderList(BLOCK, byProfile((await bl.json()).entries, profile));
   }
 
-  function renderWhitelist(entries) {
-    $("wl-list").replaceChildren(...entries.map(whitelistRow));
-    $("wl-empty").hidden = entries.length > 0;
+  function byProfile(entries, profile) {
+    const all = entries || [];
+    return profile ? all.filter((e) => e.profile === profile) : all;
   }
 
-  function whitelistRow(entry) {
+  function renderList(cfg, entries) {
+    $(cfg.list).replaceChildren(...entries.map((e) => listRow(cfg, e)));
+    $(cfg.empty).hidden = entries.length > 0;
+  }
+
+  function listRow(cfg, entry) {
     const remove = el("button", {
       class: "reject",
       type: "button",
       text: "Remove",
     });
-    remove.addEventListener("click", () => removeWhitelistEntry(entry));
+    remove.addEventListener("click", () => removeListEntry(cfg, entry));
     return el(
       "div",
       { class: "wl-row" },
@@ -178,26 +217,26 @@
       el(
         "span",
         { class: "wl-row__meta" },
-        el("span", { class: "badge profile", text: entry.type }),
+        el("span", { class: cfg.badgeClass, text: entry.type }),
         remove,
       ),
     );
   }
 
-  async function addWhitelistEntry() {
-    const input = $("wl-entry");
+  async function addListEntry(cfg) {
+    const input = $(cfg.entry);
     const value = input.value.trim();
-    const hint = $("wl-hint");
+    const hint = $(cfg.hint);
     hint.className = "hint";
     hint.textContent = "";
     if (!value) {
       hint.className = "hint bad";
-      hint.textContent = "Enter a site or topic to allow.";
+      hint.textContent = "Enter a site or topic to " + cfg.verb + ".";
       return;
     }
     let r;
     try {
-      r = await api("/review/whitelist", {
+      r = await api(cfg.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entry: value, profile: $("wl-profile").value }),
@@ -209,7 +248,7 @@
     if (r.ok) {
       input.value = "";
       toast("Added");
-      loadWhitelist();
+      loadLists();
     } else {
       hint.className = "hint bad";
       hint.textContent =
@@ -219,10 +258,10 @@
     }
   }
 
-  async function removeWhitelistEntry(entry) {
+  async function removeListEntry(cfg, entry) {
     let r;
     try {
-      r = await api("/review/whitelist", {
+      r = await api(cfg.endpoint, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entry: entry.value, profile: entry.profile }),
@@ -233,7 +272,7 @@
     }
     if (r.ok) {
       toast("Removed");
-      loadWhitelist();
+      loadLists();
     } else {
       toast("Could not remove (" + r.status + ").");
     }
@@ -380,7 +419,7 @@
     if (key === "dashboard") loadDashboard();
     else if (key === "profiles" && Aegis.loadProfiles) Aegis.loadProfiles();
     else if (key === "requests") loadRequests();
-    else if (key === "whitelist") loadWhitelist();
+    else if (key === "whitelist") loadLists();
     // "settings" is a static form — nothing to fetch.
   }
 
@@ -574,11 +613,15 @@
       if (e.key === "Enter") unlock();
     });
     $("lock-btn").addEventListener("click", lock);
-    $("wl-add-btn").addEventListener("click", addWhitelistEntry);
+    $("wl-add-btn").addEventListener("click", () => addListEntry(ALLOW));
     $("wl-entry").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") addWhitelistEntry();
+      if (e.key === "Enter") addListEntry(ALLOW);
     });
-    $("wl-profile").addEventListener("change", loadWhitelist);
+    $("bl-add-btn").addEventListener("click", () => addListEntry(BLOCK));
+    $("bl-entry").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") addListEntry(BLOCK);
+    });
+    $("wl-profile").addEventListener("change", loadLists);
     $("set-pin-btn").addEventListener("click", submitChangePin);
     $("set-pin-new").addEventListener("input", validatePinMatch);
     $("set-pin-confirm").addEventListener("input", validatePinMatch);
