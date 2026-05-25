@@ -101,8 +101,8 @@ class ProfileManager:
         """Create a profile with a fresh token + isolated stores. Returns (runtime, token)."""
         cleaned = _validate_name(name)
         token = generate_token()
-        wl, req, cache = default_profile_paths(cleaned, self._data_dir)
-        profile = Profile(cleaned, token, wl, req, cache)
+        wl, bl, req, cache = default_profile_paths(cleaned, self._data_dir)
+        profile = Profile(cleaned, token, wl, bl, req, cache)
         with self._lock:
             if cleaned in self._profiles:
                 raise ProfileExistsError(cleaned)
@@ -164,12 +164,12 @@ class ProfileManager:
         ``default``) keeps its paths -- there is no per-profile directory to move.
         """
         managed = default_profile_paths(old.name, self._data_dir)
-        if (old.whitelist_path, old.requests_path, old.cache_path) == managed:
+        if (old.whitelist_path, old.blocklist_path, old.requests_path, old.cache_path) == managed:
             old_dir = Path(self._data_dir).expanduser() / old.name
             new_dir = Path(self._data_dir).expanduser() / new_name
             shutil.move(str(old_dir), str(new_dir))
-            wl, req, cache = default_profile_paths(new_name, self._data_dir)
-            return Profile(new_name, old.token, wl, req, cache)
+            wl, bl, req, cache = default_profile_paths(new_name, self._data_dir)
+            return Profile(new_name, old.token, wl, bl, req, cache)
         return replace(old, name=new_name)
 
     def _save(self) -> None:

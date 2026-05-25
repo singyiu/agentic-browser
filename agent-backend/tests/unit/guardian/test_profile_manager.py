@@ -19,6 +19,7 @@ from agent_backend.guardian.runtime import build_runtime
 _DEFAULTS = {
     "default_token": "deftok",
     "default_whitelist_path": "w",
+    "default_blocklist_path": "b",
     "default_requests_path": "r",
     "default_cache_path": "c",
 }
@@ -158,6 +159,7 @@ def test_rename_custom_path_profile_skips_dir_move(tmp_path: Path) -> None:
         "default",
         "tok",
         str(tmp_path / "legacy_wl.json"),
+        str(tmp_path / "legacy_bl.json"),
         str(tmp_path / "legacy_req.json"),
         str(tmp_path / "legacy_cache.db"),
     )

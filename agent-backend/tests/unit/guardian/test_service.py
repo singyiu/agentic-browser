@@ -9,6 +9,7 @@ from pathlib import Path
 from starlette.testclient import TestClient
 
 from agent_backend.guardian.access_requests import RequestStore
+from agent_backend.guardian.blocklist import BlocklistStore
 from agent_backend.guardian.cache import CacheEntry
 from agent_backend.guardian.config import GuardianConfig
 from agent_backend.guardian.profile_manager import ProfileManager
@@ -32,6 +33,7 @@ def _config(parent_pin: str = "testpin", admin_path: str = ":memory:") -> Guardi
         cache_path=":memory:",
         event_log_path="/tmp/guardian_test.jsonl",
         whitelist_path=":memory:",
+        blocklist_path=":memory:",
         requests_path=":memory:",
         parent_pin=parent_pin,
         classify_timeout_s=5.0,
@@ -865,6 +867,7 @@ def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
             name="alice",
             token="tok-alice",
             whitelist=WhitelistStore(str(tmp_path / "alice_wl.json")),
+            blocklist=BlocklistStore(str(tmp_path / "alice_bl.json")),
             request_store=RequestStore(str(tmp_path / "alice_req.json")),
             cache=FakeCache(),
         ),
@@ -872,6 +875,7 @@ def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
             name="bob",
             token="tok-bob",
             whitelist=WhitelistStore(str(tmp_path / "bob_wl.json")),
+            blocklist=BlocklistStore(str(tmp_path / "bob_bl.json")),
             request_store=RequestStore(str(tmp_path / "bob_req.json")),
             cache=FakeCache(),
         ),
@@ -1013,6 +1017,7 @@ def test_registry_path_builds_isolated_profiles(tmp_path: Path) -> None:
         str(profiles_file),
         default_token="",
         default_whitelist_path=":memory:",
+        default_blocklist_path=":memory:",
         default_requests_path=":memory:",
         default_cache_path=":memory:",
     )

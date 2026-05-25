@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..config import ConfigError
 from .access_requests import RequestStore
+from .blocklist import BlocklistStore
 from .cache import VerdictCache
 from .profiles import Profile
 from .whitelist import WhitelistStore
@@ -27,6 +28,7 @@ class ProfileRuntime:
     name: str
     token: str
     whitelist: WhitelistStore
+    blocklist: BlocklistStore
     request_store: RequestStore
     cache: VerdictCache
 
@@ -36,7 +38,12 @@ def build_runtime(profile: Profile) -> ProfileRuntime:
 
     Raises :class:`ConfigError` if a data directory cannot be created.
     """
-    for path in (profile.whitelist_path, profile.requests_path, profile.cache_path):
+    for path in (
+        profile.whitelist_path,
+        profile.blocklist_path,
+        profile.requests_path,
+        profile.cache_path,
+    ):
         try:
             Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -47,6 +54,7 @@ def build_runtime(profile: Profile) -> ProfileRuntime:
         name=profile.name,
         token=profile.token,
         whitelist=WhitelistStore(profile.whitelist_path),
+        blocklist=BlocklistStore(profile.blocklist_path),
         request_store=RequestStore(profile.requests_path),
         cache=VerdictCache(profile.cache_path),
     )

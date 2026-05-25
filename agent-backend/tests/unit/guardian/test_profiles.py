@@ -19,6 +19,7 @@ from agent_backend.guardian.profiles import (
 _DEFAULTS = {
     "default_token": "deftok",
     "default_whitelist_path": "data/guardian_whitelist.json",
+    "default_blocklist_path": "data/guardian_blocklist.json",
     "default_requests_path": "data/guardian_requests.json",
     "default_cache_path": "data/guardian_cache.db",
 }
@@ -33,8 +34,8 @@ def _write(tmp_path: Path, data: object) -> str:
 def _registry() -> ProfileRegistry:
     return ProfileRegistry(
         (
-            Profile("alice", "tok-alice", "a/wl.json", "a/req.json", "a/cache.db"),
-            Profile("bob", "tok-bob", "b/wl.json", "b/req.json", "b/cache.db"),
+            Profile("alice", "tok-alice", "a/wl.json", "a/bl.json", "a/req.json", "a/cache.db"),
+            Profile("bob", "tok-bob", "b/wl.json", "b/bl.json", "b/req.json", "b/cache.db"),
         )
     )
 
@@ -62,6 +63,7 @@ def test_load_no_file_uses_default_token_and_paths(tmp_path: Path) -> None:
     default = _find(reg, "default")
     assert default.token == "deftok"
     assert default.whitelist_path == "data/guardian_whitelist.json"
+    assert default.blocklist_path == "data/guardian_blocklist.json"
     assert default.requests_path == "data/guardian_requests.json"
     assert default.cache_path == "data/guardian_cache.db"
 
@@ -88,6 +90,7 @@ def test_load_derives_default_paths_per_profile(tmp_path: Path) -> None:
     path = _write(tmp_path, [{"name": "alice", "token": "tA"}])
     alice = _find(load_profiles(path, **_DEFAULTS), "alice")
     assert alice.whitelist_path == "data/profiles/alice/whitelist.json"
+    assert alice.blocklist_path == "data/profiles/alice/blocklist.json"
     assert alice.requests_path == "data/profiles/alice/requests.json"
     assert alice.cache_path == "data/profiles/alice/cache.db"
 
@@ -100,6 +103,7 @@ def test_load_accepts_path_overrides(tmp_path: Path) -> None:
                 "name": "alice",
                 "token": "tA",
                 "whitelist_path": "/custom/wl.json",
+                "blocklist_path": "/custom/bl.json",
                 "requests_path": "/custom/req.json",
                 "cache_path": "/custom/cache.db",
             }
@@ -107,6 +111,7 @@ def test_load_accepts_path_overrides(tmp_path: Path) -> None:
     )
     alice = _find(load_profiles(path, **_DEFAULTS), "alice")
     assert alice.whitelist_path == "/custom/wl.json"
+    assert alice.blocklist_path == "/custom/bl.json"
     assert alice.requests_path == "/custom/req.json"
     assert alice.cache_path == "/custom/cache.db"
 
@@ -162,6 +167,7 @@ def test_load_no_file_no_default_token_raises(tmp_path: Path) -> None:
             str(tmp_path / "absent.json"),
             default_token="",
             default_whitelist_path="w",
+            default_blocklist_path="b",
             default_requests_path="r",
             default_cache_path="c",
         )
@@ -174,6 +180,7 @@ def test_load_empty_list_no_default_token_raises(tmp_path: Path) -> None:
             path,
             default_token="",
             default_whitelist_path="w",
+            default_blocklist_path="b",
             default_requests_path="r",
             default_cache_path="c",
         )
@@ -215,7 +222,7 @@ def test_save_profiles_round_trip(tmp_path: Path) -> None:
     reloaded = load_profiles(path, **_DEFAULTS)
 
     def key(p: Profile) -> tuple[str, ...]:
-        return (p.name, p.token, p.whitelist_path, p.requests_path, p.cache_path)
+        return (p.name, p.token, p.whitelist_path, p.blocklist_path, p.requests_path, p.cache_path)
 
     assert {key(p) for p in reloaded.all()} == {key(p) for p in profiles}
 
@@ -231,7 +238,9 @@ def test_save_profiles_atomic_keeps_original_on_replace_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = str(tmp_path / "out.json")
-    save_profiles((Profile("alice", "tok-alice", "a/wl.json", "a/req.json", "a/cache.db"),), path)
+    save_profiles(
+        (Profile("alice", "tok-alice", "a/wl.json", "a/bl.json", "a/req.json", "a/cache.db"),), path
+    )
     before = Path(path).read_text(encoding="utf-8")
 
     def boom(*_args: object, **_kwargs: object) -> None:
@@ -239,7 +248,9 @@ def test_save_profiles_atomic_keeps_original_on_replace_failure(
 
     monkeypatch.setattr("agent_backend.guardian.profiles.os.replace", boom)
     with pytest.raises(OSError):
-        save_profiles((Profile("bob", "tok-bob", "b/wl.json", "b/req.json", "b/cache.db"),), path)
+        save_profiles(
+            (Profile("bob", "tok-bob", "b/wl.json", "b/bl.json", "b/req.json", "b/cache.db"),), path
+        )
 
     # A failed replace must leave the original file intact (no partial write)...
     assert Path(path).read_text(encoding="utf-8") == before

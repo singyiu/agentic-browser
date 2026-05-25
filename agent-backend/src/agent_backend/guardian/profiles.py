@@ -36,6 +36,7 @@ class Profile:
     name: str
     token: str
     whitelist_path: str
+    blocklist_path: str
     requests_path: str
     cache_path: str
 
@@ -50,10 +51,15 @@ class ProfileRegistry:
         return self.profiles
 
 
-def default_profile_paths(name: str, base: str = PROFILE_DATA_DIR) -> tuple[str, str, str]:
-    """The default (whitelist, requests, cache) file paths for a profile under ``base``."""
+def default_profile_paths(name: str, base: str = PROFILE_DATA_DIR) -> tuple[str, str, str, str]:
+    """Default (whitelist, blocklist, requests, cache) paths for ``name`` under ``base``."""
     root = f"{base}/{name}"
-    return (f"{root}/whitelist.json", f"{root}/requests.json", f"{root}/cache.db")
+    return (
+        f"{root}/whitelist.json",
+        f"{root}/blocklist.json",
+        f"{root}/requests.json",
+        f"{root}/cache.db",
+    )
 
 
 def load_profiles(
@@ -61,6 +67,7 @@ def load_profiles(
     *,
     default_token: str,
     default_whitelist_path: str,
+    default_blocklist_path: str,
     default_requests_path: str,
     default_cache_path: str,
 ) -> ProfileRegistry:
@@ -88,6 +95,7 @@ def load_profiles(
                 name=DEFAULT_PROFILE_NAME,
                 token=default_token,
                 whitelist_path=default_whitelist_path,
+                blocklist_path=default_blocklist_path,
                 requests_path=default_requests_path,
                 cache_path=default_cache_path,
             ),
@@ -119,6 +127,7 @@ def _profile_to_dict(profile: Profile) -> dict[str, str]:
         "name": profile.name,
         "token": profile.token,
         "whitelist_path": profile.whitelist_path,
+        "blocklist_path": profile.blocklist_path,
         "requests_path": profile.requests_path,
         "cache_path": profile.cache_path,
     }
@@ -143,11 +152,12 @@ def _build_profile(entry: object) -> Profile:
         raise ConfigError(f"Invalid profile name {name!r}: use only letters, digits, '-' or '_'.")
     if not token:
         raise ConfigError(f"Profile {name!r} has an empty token.")
-    wl, req, cache = default_profile_paths(name)
+    wl, bl, req, cache = default_profile_paths(name)
     return Profile(
         name=name,
         token=token,
         whitelist_path=str(entry.get("whitelist_path") or wl),
+        blocklist_path=str(entry.get("blocklist_path") or bl),
         requests_path=str(entry.get("requests_path") or req),
         cache_path=str(entry.get("cache_path") or cache),
     )

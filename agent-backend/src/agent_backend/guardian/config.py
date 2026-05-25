@@ -17,6 +17,7 @@ DEFAULT_SCREENSHOT_THRESHOLD = 0.6
 DEFAULT_CACHE_PATH = "data/guardian_cache.db"
 DEFAULT_EVENT_LOG_PATH = "data/guardian_events.jsonl"
 DEFAULT_WHITELIST_PATH = "data/guardian_whitelist.json"
+DEFAULT_BLOCKLIST_PATH = "data/guardian_blocklist.json"
 DEFAULT_REQUESTS_PATH = "data/guardian_requests.json"
 DEFAULT_PROFILES_PATH = "data/guardian_profiles.json"
 DEFAULT_ADMIN_PATH = "data/guardian_admin.json"
@@ -35,6 +36,7 @@ class GuardianConfig:
     cache_path: str
     event_log_path: str
     whitelist_path: str
+    blocklist_path: str
     requests_path: str
     parent_pin: str
     classify_timeout_s: float
@@ -77,6 +79,7 @@ class GuardianConfig:
             cache_path=_clean(e.get("GUARDIAN_CACHE_PATH")) or DEFAULT_CACHE_PATH,
             event_log_path=_clean(e.get("GUARDIAN_EVENT_LOG_PATH")) or DEFAULT_EVENT_LOG_PATH,
             whitelist_path=_clean(e.get("GUARDIAN_WHITELIST_PATH")) or DEFAULT_WHITELIST_PATH,
+            blocklist_path=_clean(e.get("GUARDIAN_BLOCKLIST_PATH")) or DEFAULT_BLOCKLIST_PATH,
             requests_path=_clean(e.get("GUARDIAN_REQUESTS_PATH")) or DEFAULT_REQUESTS_PATH,
             profiles_path=_clean(e.get("GUARDIAN_PROFILES_PATH")) or DEFAULT_PROFILES_PATH,
             admin_path=_clean(e.get("GUARDIAN_ADMIN_PATH")) or DEFAULT_ADMIN_PATH,

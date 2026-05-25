@@ -18,6 +18,7 @@ from starlette.staticfiles import StaticFiles
 
 from ..config import ConfigError
 from .access_requests import RequestStore
+from .blocklist import BlocklistStore
 from .cache import VerdictCache
 from .classifier import Classifier
 from .config import GuardianConfig
@@ -32,7 +33,7 @@ from .profile_manager import (
     ProfileNotFoundError,
 )
 from .profiles import DEFAULT_PROFILE_NAME, ProfileRegistry
-from .runtime import ProfileRuntime
+from .runtime import ProfileRuntime, build_runtime
 from .verdict import Verdict
 from .whitelist import WhitelistStore, classify_entry
 
@@ -78,24 +79,8 @@ def _build_runtimes(
     if runtimes is not None:
         return runtimes
     if registry is not None:
-        built: dict[str, ProfileRuntime] = {}
-        for profile in registry.all():
-            # Each teen's stores live in their own dir; create it before the stores open.
-            for path in (profile.whitelist_path, profile.requests_path, profile.cache_path):
-                try:
-                    Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-                except OSError as exc:
-                    raise ConfigError(
-                        f"Cannot create data directory for profile {profile.name!r}: {exc}"
-                    ) from exc
-            built[profile.name] = ProfileRuntime(
-                name=profile.name,
-                token=profile.token,
-                whitelist=WhitelistStore(profile.whitelist_path),
-                request_store=RequestStore(profile.requests_path),
-                cache=VerdictCache(profile.cache_path),
-            )
-        return built
+        # build_runtime creates each teen's data dirs (incl. blocklist) and opens its stores.
+        return {profile.name: build_runtime(profile) for profile in registry.all()}
     if not config.token:
         # Guard the public create_app() against a silent lockout: an empty default token
         # matches no request. (__main__ resolves the registry first, which also checks this.)
@@ -107,6 +92,7 @@ def _build_runtimes(
         name=DEFAULT_PROFILE_NAME,
         token=config.token,
         whitelist=whitelist or WhitelistStore(config.whitelist_path),
+        blocklist=BlocklistStore(config.blocklist_path),
         request_store=request_store or RequestStore(config.requests_path),
         cache=cache or VerdictCache(config.cache_path),
     )

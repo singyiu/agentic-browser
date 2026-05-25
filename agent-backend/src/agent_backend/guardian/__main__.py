@@ -30,6 +30,7 @@ def main() -> None:  # pragma: no cover - process entry point
             config.profiles_path,
             default_token=config.token,
             default_whitelist_path=config.whitelist_path,
+            default_blocklist_path=config.blocklist_path,
             default_requests_path=config.requests_path,
             default_cache_path=config.cache_path,
         )
