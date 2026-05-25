@@ -1226,7 +1226,7 @@ def test_review_whitelist_post_with_profile_targets_that_store(tmp_path: Path) -
 
 def _lists_setup(
     tmp_path: Path, classifier: object | None = None
-) -> tuple[TestClient, ProfileManager, str, "FakeClassifier"]:
+) -> tuple[TestClient, ProfileManager, str, FakeClassifier]:
     """A client + manager with one teen ('kid') created. Returns (client, manager, token, fake).
 
     The manager's data lives under tmp_path (so the Global profile is hermetic); set kid lists
