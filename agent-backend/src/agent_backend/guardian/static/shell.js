@@ -57,10 +57,24 @@
     }, 3000);
   }
 
+  // Shared with profiles.js (a separate file): the DOM/util helpers plus a slot it fills
+  // with its section loader, so it reuses this PIN plumbing instead of duplicating it.
+  const Aegis = (window.Aegis = window.Aegis || {});
+  Aegis.$ = $;
+  Aegis.el = el;
+  Aegis.api = api;
+  Aegis.toast = toast;
+
   /* ---------- Sections ---------- */
   // Per-section data loaders. Filled in by later steps; the shell + routing work
   // regardless, so an unimplemented section simply shows its static markup.
-  const SECTIONS = ["dashboard", "requests", "whitelist", "settings"];
+  const SECTIONS = [
+    "dashboard",
+    "profiles",
+    "requests",
+    "whitelist",
+    "settings",
+  ];
 
   /* Dashboard — at-a-glance counts from existing endpoints (no new aggregate
      route); each tile links into its section. */
@@ -111,8 +125,27 @@
     return tile;
   }
 
-  /* Whitelist — parent view of allowed sites/topics via /review/whitelist. */
+  /* Whitelist — parent view of allowed sites/topics via /review/whitelist, scoped to the
+     profile chosen in #wl-profile (a parent write must name which teen it targets). */
+  async function populateProfileSelect() {
+    let r;
+    try {
+      r = await api("/profiles");
+    } catch (_e) {
+      return;
+    }
+    if (!r.ok) return;
+    const names = ((await r.json()).profiles || []).map((p) => p.name);
+    const sel = $("wl-profile");
+    const prev = sel.value;
+    sel.replaceChildren(
+      ...names.map((n) => el("option", { value: n, text: n })),
+    );
+    if (names.includes(prev)) sel.value = prev;
+  }
+
   async function loadWhitelist() {
+    await populateProfileSelect();
     let r;
     try {
       r = await api("/review/whitelist");
@@ -120,7 +153,10 @@
       toast("Could not reach the guardian service.");
       return;
     }
-    if (r.ok) renderWhitelist((await r.json()).entries || []);
+    if (!r.ok) return;
+    const all = (await r.json()).entries || [];
+    const profile = $("wl-profile").value;
+    renderWhitelist(profile ? all.filter((e) => e.profile === profile) : all);
   }
 
   function renderWhitelist(entries) {
@@ -164,7 +200,7 @@
       r = await api("/review/whitelist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entry: value }),
+        body: JSON.stringify({ entry: value, profile: $("wl-profile").value }),
       });
     } catch (_e) {
       toast("Could not reach the guardian service.");
@@ -342,6 +378,7 @@
 
   function loadSection(key) {
     if (key === "dashboard") loadDashboard();
+    else if (key === "profiles" && Aegis.loadProfiles) Aegis.loadProfiles();
     else if (key === "requests") loadRequests();
     else if (key === "whitelist") loadWhitelist();
     // "settings" is a static form — nothing to fetch.
@@ -541,6 +578,7 @@
     $("wl-entry").addEventListener("keydown", (e) => {
       if (e.key === "Enter") addWhitelistEntry();
     });
+    $("wl-profile").addEventListener("change", loadWhitelist);
     $("set-pin-btn").addEventListener("click", submitChangePin);
     $("set-pin-new").addEventListener("input", validatePinMatch);
     $("set-pin-confirm").addEventListener("input", validatePinMatch);

@@ -1179,3 +1179,26 @@ def test_regenerate_token_unknown_404(tmp_path: Path) -> None:
 def test_profiles_list_requires_pin_403(tmp_path: Path) -> None:
     client, _ = _pm_client(tmp_path)
     assert client.get("/profiles").status_code == 403
+
+
+# --- profile-scoped whitelist (the UI's profile <select> drives these) ------
+
+
+def test_review_whitelist_post_requires_profile_when_multi(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path))
+    # Two teens: a parent write must name which profile (the PIN header identifies none).
+    resp = client.post("/review/whitelist", json={"entry": "example.com"}, headers=_PIN)
+    assert resp.status_code == 422
+
+
+def test_review_whitelist_post_with_profile_targets_that_store(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes)
+    resp = client.post(
+        "/review/whitelist",
+        json={"entry": "example.com", "profile": "alice"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert "example.com" in runtimes["alice"].whitelist.current().values
+    assert runtimes["bob"].whitelist.current().values == ()

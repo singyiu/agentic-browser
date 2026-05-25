@@ -112,9 +112,11 @@ rules above.
   `GUARDIAN_PARENT_PIN` in `.env` still works and skips the wizard.) Forgot it? Delete that file
   and re-run the wizard.
 - **Parent dashboard:** open `http://127.0.0.1:2947/` and enter your PIN. A collapsible sidebar
-  holds **Dashboard** (at-a-glance counts), **Requests** (the review queue — `/review` now
-  redirects here), **Whitelist** (add/remove allowed sites and topics), and **Settings** (change
-  the PIN). Pending requests show the URL, why it was blocked, the kid's note, and an **editable
+  holds **Dashboard** (at-a-glance counts), **Profiles** (create/rename/delete each kid and mint
+  their browser token — see *Multiple teen profiles* below), **Requests** (the review queue —
+  `/review` now redirects here), **Whitelist** (per-profile allowed sites and topics), and
+  **Settings** (change the PIN). Pending requests show the URL, why it was blocked, the kid's note,
+  and an **editable
   "allow" field pre-filled with the URL** — broaden it to a section (`youtube.com/results*`) or a
   topic (`BeyBlade anime`) before approving, or reject with an optional note.
 - **The kid gets unblocked** by tapping **Check if approved** on the block page; once
@@ -146,6 +148,11 @@ curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/j
 curl -s -H "X-Guardian-Parent-Pin: $PIN" http://127.0.0.1:2947/review/whitelist
 curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/json' \
   -d '{"current_pin":"'"$PIN"'","new_pin":"4321"}' http://127.0.0.1:2947/settings/pin
+
+# Parent side: manage teen profiles (the token is returned once, on create/regenerate).
+curl -s -H "X-Guardian-Parent-Pin: $PIN" http://127.0.0.1:2947/profiles
+curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/json' \
+  -d '{"name":"alex"}' http://127.0.0.1:2947/profiles
 ```
 
 ## Look & feel (Aegis design system)
@@ -160,9 +167,9 @@ places because the guardian and the extension ship as separate units with no bui
   `home.html` / `setup.html` (Starlette `StaticFiles` mount in `service.py`);
 - bundled in `extension/`, linked by `block.html`.
 
-The home dashboard's collapsible sidebar adds two **guardian-only** files (not shipped to the
-extension): `aegis-shell.css` (app-shell layout) and `shell.js` (the unlock gate, hash router, and
-the Dashboard / Requests / Whitelist / Settings sections).
+The home dashboard's collapsible sidebar adds three **guardian-only** files (not shipped to the
+extension): `aegis-shell.css` (app-shell layout), `shell.js` (the unlock gate, hash router, and the
+Dashboard / Requests / Whitelist / Settings sections), and `profiles.js` (the Profiles section).
 
 Fonts (Manrope, Instrument Serif, JetBrains Mono) are **self-hosted** under each `fonts/` dir — no
 Google Fonts or other third-party calls, so the pages render fully offline. The canonical token source
@@ -219,8 +226,17 @@ per teen** — a site approved for one teen stays blocked for the others, and on
 another's requests. Each teen's browser uses its **own** `GUARDIAN_TOKEN`; the guardian maps the
 token to that teen's profile.
 
-**On the parent (guardian) machine** — list the teens in `data/guardian_profiles.json` (a JSON
-array; copy `guardian_profiles.example.json` to start), each with a name and a long random token:
+**Add teens from the dashboard (recommended).** Set `GUARDIAN_HOST=0.0.0.0` and
+`GUARDIAN_PARENT_PIN=<pin>` in `.env`, start the guardian, open `/`, and go to **Profiles →
+Create**. The guardian generates that teen's `GUARDIAN_TOKEN`, shows it **once** with a
+ready-to-paste `guardian-config.json` and launch command, and creates their isolated files under
+`data/profiles/<name>/` (whitelist, requests, cache). Changes take effect immediately (no restart)
+and are saved to `data/guardian_profiles.json`. Each profile can also be **renamed**, **deleted**
+(optionally erasing its data), and have its **token regenerated** (the old token stops working at
+once).
+
+**Or seed the file by hand** — `data/guardian_profiles.json` is a JSON array (copy
+`guardian_profiles.example.json` to start), each entry a name and a long random token:
 
 ```json
 [
@@ -229,10 +245,8 @@ array; copy `guardian_profiles.example.json` to start), each with a name and a l
 ]
 ```
 
-Set `GUARDIAN_HOST=0.0.0.0` and `GUARDIAN_PARENT_PIN=<pin>` in `.env`, then run
-`scripts/launch-guardian.sh` (it prints `Teen profiles: alex, sam`). Each teen gets isolated files
-under `data/profiles/<name>/` (whitelist, requests, cache), created automatically. `GUARDIAN_TOKEN`
-is **not** needed when a profiles file is present. Optional per-teen overrides
+`scripts/launch-guardian.sh` then prints `Teen profiles: alex, sam`. `GUARDIAN_TOKEN` is **not**
+needed when a profiles file is present. Optional per-teen overrides
 `whitelist_path` / `requests_path` / `cache_path` may be added to a profile entry.
 
 **On each teen's (browser) machine** — in `agent-backend/.env` set that teen's own token plus the
@@ -249,7 +263,9 @@ approving adds the entry to **that teen's** whitelist only.
   them. The registry file holds every teen's token, so keep it only on the parent's machine (never
   copy it to a teen's computer — each teen's `.env` holds just their own token) and restrict its
   file permissions (e.g. `chmod 600`).
-- Profiles are read once at startup, so **adding or removing a teen needs a guardian restart**.
+- Manage profiles from the **Profiles** dashboard section: create / rename / delete / regenerate
+  apply immediately and persist to `data/guardian_profiles.json`. Only **hand-edits** to that file
+  need a guardian restart to load.
 - With no `data/guardian_profiles.json` (or an empty list), the guardian runs exactly as before: a
   single profile using `GUARDIAN_TOKEN` and the legacy `data/guardian_whitelist.json` /
   `data/guardian_requests.json` — single-machine and single-teen-LAN setups are unchanged.
@@ -283,8 +299,8 @@ bash scripts/uninstall-guardian-service.sh
   installer bakes your current `PATH` into the unit (launchd/systemd otherwise start with a minimal
   `PATH` that misses nvm/npm bins). If you switch Node versions (e.g. via nvm), **re-run the
   installer** so the baked path stays valid.
-- **Restart after editing profiles.** Profiles are read once at startup, so after changing
-  `data/guardian_profiles.json` restart the service — macOS:
+- **Restart only after _hand-editing_ profiles.** The dashboard's Profiles section applies changes
+  live; but if you edit `data/guardian_profiles.json` directly, restart the service — macOS:
   `launchctl kickstart -k "gui/$(id -u)/com.aegis.guardian"`; Linux:
   `systemctl --user restart aegis-guardian.service`.
 - **Linux parent boxes.** The same installer writes a systemd `--user` unit from

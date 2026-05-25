@@ -336,6 +336,96 @@
   letter-spacing: 0.25em;
 }
 
+/* ---------- Whitelist: profile selector ---------- */
+.wl-profile-select {
+  width: 100%;
+  margin-bottom: var(--space-3);
+}
+
+/* ---------- Profiles ---------- */
+.prof-card {
+  margin-bottom: var(--space-3);
+}
+.prof-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.prof-card__name {
+  font-weight: var(--weight-semibold);
+  font-size: var(--size-lg);
+  color: var(--fg-1);
+  word-break: break-all;
+}
+.prof-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.prof-inline {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-1);
+}
+.prof-inline__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+.prof-inline__input {
+  flex: 1;
+  min-width: 160px;
+}
+.prof-inline__warn {
+  margin: 0 0 var(--space-2);
+  color: var(--fg-1);
+}
+.prof-inline__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  color: var(--fg-2);
+  font-size: var(--size-sm);
+}
+.prof-reveal {
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--aegis-terracotta);
+}
+.prof-reveal h2 {
+  margin: 0 0 var(--space-1);
+}
+.prof-codeblock {
+  margin: var(--space-3) 0;
+}
+.prof-codeblock__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+.prof-code {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--size-sm);
+  color: var(--fg-1);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.prof-copy {
+  flex: none;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--size-sm);
+}
+
 /* ---------- Responsive: off-canvas sidebar under 768px ---------- */
 @media (max-width: 767px) {
   .app-shell,
