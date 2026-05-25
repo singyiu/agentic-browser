@@ -11,6 +11,7 @@ from starlette.testclient import TestClient
 from agent_backend.guardian.access_requests import RequestStore
 from agent_backend.guardian.cache import CacheEntry
 from agent_backend.guardian.config import GuardianConfig
+from agent_backend.guardian.profile_manager import ProfileManager
 from agent_backend.guardian.profiles import load_profiles
 from agent_backend.guardian.runtime import ProfileRuntime
 from agent_backend.guardian.service import create_app
@@ -1032,3 +1033,149 @@ def test_registry_path_builds_isolated_profiles(tmp_path: Path) -> None:
     # The per-teen data dirs were created on disk by the registry branch.
     assert (tmp_path / "alice" / "wl.json").exists()
     assert (tmp_path / "bob").is_dir()
+
+
+# --- profile management API (create / list / rename / delete / regenerate) --
+
+
+def _pm_client(
+    tmp_path: Path,
+    *,
+    classifier: object | None = None,
+    parent_pin: str = "testpin",
+) -> tuple[TestClient, ProfileManager]:
+    """A client whose profiles + data live entirely under tmp_path (real ProfileManager)."""
+    manager = ProfileManager(
+        {},
+        {},
+        profiles_path=str(tmp_path / "profiles.json"),
+        data_dir=str(tmp_path / "profiles"),
+    )
+    app = create_app(
+        _config(parent_pin=parent_pin),
+        classifier=classifier or FakeClassifier(Verdict("allow", "", 0.95)),
+        event_log=FakeLog(),
+        manager=manager,
+    )
+    return TestClient(app), manager
+
+
+def test_create_profile_returns_token_and_config(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    resp = client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["name"] == "alice"
+    assert len(body["token"]) == 64
+    assert body["config"] == {"token": body["token"], "endpoint": "http://127.0.0.1:2947"}
+
+
+def test_create_profile_duplicate_409(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    assert client.post("/profiles", json={"name": "alice"}, headers=_PIN).status_code == 409
+
+
+def test_create_profile_bad_name_422(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    assert client.post("/profiles", json={"name": "a/b"}, headers=_PIN).status_code == 422
+
+
+def test_create_profile_requires_pin_403(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    assert client.post("/profiles", json={"name": "alice"}).status_code == 403
+
+
+def test_create_profile_unconfigured_pin_503(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path, parent_pin="")
+    assert client.post("/profiles", json={"name": "alice"}, headers=_PIN).status_code == 503
+
+
+def test_list_profiles_omits_token(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    created = client.post("/profiles", json={"name": "alice"}, headers=_PIN).json()
+    listed = client.get("/profiles", headers=_PIN).json()["profiles"]
+    assert listed == [{"name": "alice", "whitelist_count": 0, "pending_count": 0}]
+    assert created["token"] not in str(listed)
+
+
+def test_list_profiles_counts_reflect_whitelist(tmp_path: Path) -> None:
+    client, manager = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    manager.snapshot()["alice"].whitelist.add("example.com")
+    listed = client.get("/profiles", headers=_PIN).json()["profiles"]
+    assert listed[0]["whitelist_count"] == 1
+
+
+def test_rename_profile_old_name_gone(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    resp = client.post("/profiles/alice/rename", json={"new_name": "alicia"}, headers=_PIN)
+    assert resp.status_code == 200
+    names = {p["name"] for p in client.get("/profiles", headers=_PIN).json()["profiles"]}
+    assert names == {"alicia"}
+
+
+def test_rename_profile_target_taken_409(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    client.post("/profiles", json={"name": "bob"}, headers=_PIN)
+    resp = client.post("/profiles/alice/rename", json={"new_name": "bob"}, headers=_PIN)
+    assert resp.status_code == 409
+
+
+def test_rename_profile_unknown_404(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    resp = client.post("/profiles/ghost/rename", json={"new_name": "x"}, headers=_PIN)
+    assert resp.status_code == 404
+
+
+def test_delete_profile_then_token_rejected(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    token = client.post("/profiles", json={"name": "alice"}, headers=_PIN).json()["token"]
+    hdr = {"X-Guardian-Token": token}
+    assert client.post("/classify", json={"url": "http://x"}, headers=hdr).status_code == 200
+    assert client.delete("/profiles/alice", headers=_PIN).status_code == 200
+    assert client.post("/classify", json={"url": "http://x"}, headers=hdr).status_code == 403
+
+
+def test_delete_profile_purge_removes_dir(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    assert (tmp_path / "profiles" / "alice").exists()
+    client.delete("/profiles/alice", params={"purge": "true"}, headers=_PIN)
+    assert not (tmp_path / "profiles" / "alice").exists()
+
+
+def test_delete_profile_unknown_404(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    assert client.delete("/profiles/ghost", headers=_PIN).status_code == 404
+
+
+def test_regenerate_token_invalidates_old(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    old = client.post("/profiles", json={"name": "alice"}, headers=_PIN).json()["token"]
+    new = client.post("/profiles/alice/token", headers=_PIN).json()["token"]
+    assert new != old
+    rejected = client.post("/classify", json={"url": "http://x"}, headers={"X-Guardian-Token": old})
+    accepted = client.post("/classify", json={"url": "http://x"}, headers={"X-Guardian-Token": new})
+    assert rejected.status_code == 403
+    assert accepted.status_code == 200
+
+
+def test_regenerate_token_returns_config(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    body = client.post("/profiles/alice/token", headers=_PIN).json()
+    assert body["config"]["endpoint"] == "http://127.0.0.1:2947"
+    assert body["config"]["token"] == body["token"]
+
+
+def test_regenerate_token_unknown_404(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    assert client.post("/profiles/ghost/token", headers=_PIN).status_code == 404
+
+
+def test_profiles_list_requires_pin_403(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    assert client.get("/profiles").status_code == 403

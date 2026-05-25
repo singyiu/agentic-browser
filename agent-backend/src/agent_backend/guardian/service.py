@@ -25,7 +25,12 @@ from .event_log import EventLog
 from .metrics import GuardianMetrics
 from .normalize import extract_host, normalize_url
 from .pin_store import PinStore, validate_pin_format
-from .profile_manager import ProfileManager
+from .profile_manager import (
+    InvalidProfileNameError,
+    ProfileExistsError,
+    ProfileManager,
+    ProfileNotFoundError,
+)
 from .profiles import DEFAULT_PROFILE_NAME, ProfileRegistry
 from .runtime import ProfileRuntime
 from .verdict import Verdict
@@ -624,6 +629,96 @@ def create_app(
         event_log.log("parent_pin_changed")  # records the event, never the PIN value
         return JSONResponse({"ok": True})
 
+    def _profile_config(token: str) -> dict[str, str]:
+        """The extension's guardian-config.json contents for a profile's token."""
+        return {"token": token, "endpoint": f"http://{config.host}:{config.port}"}
+
+    async def profiles_endpoint(request: Request) -> JSONResponse:
+        # Parent-only profile management. GET lists profiles (never their tokens); POST creates
+        # one and returns its freshly generated token + a ready-to-paste extension config ONCE
+        # (the UI shows it then forgets it -- it is never re-fetchable).
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        if request.method == "GET":
+            return JSONResponse({"profiles": _pm.list_profiles()})
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        loop = asyncio.get_running_loop()
+        try:
+            runtime, token = await loop.run_in_executor(None, _pm.create, str(body.get("name", "")))
+        except InvalidProfileNameError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        except ProfileExistsError:
+            return JSONResponse(
+                {"error": "a profile with that name already exists"}, status_code=409
+            )
+        except (ConfigError, OSError):
+            return JSONResponse({"error": "could not create profile data"}, status_code=500)
+        event_log.log("profile_created", profile=runtime.name)  # never the token
+        return JSONResponse(
+            {"name": runtime.name, "token": token, "config": _profile_config(token)},
+            status_code=201,
+        )
+
+    async def profile_rename(request: Request) -> JSONResponse:
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        name = request.path_params["name"]
+        new_name = str(body.get("new_name", ""))
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, functools.partial(_pm.rename, name, new_name))
+        except InvalidProfileNameError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        except ProfileNotFoundError:
+            return JSONResponse({"error": "profile not found"}, status_code=404)
+        except ProfileExistsError:
+            return JSONResponse(
+                {"error": "a profile with that name already exists"}, status_code=409
+            )
+        except (ConfigError, OSError):
+            return JSONResponse({"error": "could not rename profile"}, status_code=500)
+        event_log.log("profile_renamed", profile=new_name.strip())
+        return JSONResponse({"ok": True})
+
+    async def profile_regenerate_token(request: Request) -> JSONResponse:
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        name = request.path_params["name"]
+        loop = asyncio.get_running_loop()
+        try:
+            token = await loop.run_in_executor(None, _pm.regenerate_token, name)
+        except ProfileNotFoundError:
+            return JSONResponse({"error": "profile not found"}, status_code=404)
+        except (ConfigError, OSError):
+            return JSONResponse({"error": "could not regenerate token"}, status_code=500)
+        event_log.log("profile_token_regenerated", profile=name)  # never the token
+        return JSONResponse({"token": token, "config": _profile_config(token)})
+
+    async def profile_delete(request: Request) -> JSONResponse:
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        name = request.path_params["name"]
+        purge = request.query_params.get("purge", "").lower() in ("1", "true", "yes")
+        try:
+            await asyncio.get_running_loop().run_in_executor(
+                None, functools.partial(_pm.delete, name, purge=purge)
+            )
+        except ProfileNotFoundError:
+            return JSONResponse({"error": "profile not found"}, status_code=404)
+        event_log.log("profile_deleted", profile=name, purged=purge)
+        return JSONResponse({"ok": True})
+
     app = Starlette(
         routes=[
             Route("/", home_page, methods=["GET"]),
@@ -640,6 +735,11 @@ def create_app(
             Route("/review/decision", review_decision, methods=["POST"]),
             Route("/review/whitelist", review_whitelist, methods=["GET", "POST", "DELETE"]),
             Route("/settings/pin", settings_change_pin, methods=["POST"]),
+            Route("/profiles", profiles_endpoint, methods=["GET", "POST"]),
+            # More-specific paths first so {name} doesn't swallow /rename and /token.
+            Route("/profiles/{name}/rename", profile_rename, methods=["POST"]),
+            Route("/profiles/{name}/token", profile_regenerate_token, methods=["POST"]),
+            Route("/profiles/{name}", profile_delete, methods=["DELETE"]),
             # Shared design-system assets (tokens, component CSS, self-hosted fonts, brand
             # SVG) for the served pages. No auth — purely static, public styling like the
             # page shells themselves. The /static prefix never shadows the exact routes above.
