@@ -1219,3 +1219,98 @@ def test_review_whitelist_post_with_profile_targets_that_store(tmp_path: Path) -
     assert resp.status_code == 200
     assert "example.com" in runtimes["alice"].whitelist.current().values
     assert runtimes["bob"].whitelist.current().values == ()
+
+
+# --- blocklist + Global precedence (kid block > kid allow > global block > global allow) ----
+
+
+def _lists_setup(
+    tmp_path: Path, classifier: object | None = None
+) -> tuple[TestClient, ProfileManager, str, "FakeClassifier"]:
+    """A client + manager with one teen ('kid') created. Returns (client, manager, token, fake).
+
+    The manager's data lives under tmp_path (so the Global profile is hermetic); set kid lists
+    via manager.snapshot()['kid'] and Global lists via manager.global_runtime().
+    """
+    fake = classifier or FakeClassifier(Verdict("allow", "ai", 0.95))
+    manager = ProfileManager({}, {}, profiles_path=None, data_dir=str(tmp_path / "pd"))
+    app = create_app(_config(), classifier=fake, event_log=FakeLog(), manager=manager)
+    _, token = manager.create("kid")
+    return TestClient(app), manager, token, fake
+
+
+def _classify(client: TestClient, token: str, url: str) -> dict:
+    return client.post(
+        "/classify", json={"url": url}, headers={"X-Guardian-Token": token}
+    ).json()
+
+
+def test_kid_blocklist_hard_blocks(tmp_path: Path) -> None:
+    client, mgr, tok, fake = _lists_setup(tmp_path, FakeClassifier(RuntimeError("must not run")))
+    mgr.snapshot()["kid"].blocklist.add("tiktok.com")
+    body = _classify(client, tok, "https://www.tiktok.com/")
+    assert body["verdict"] == "block"
+    assert body["reason"] == "blocklisted"
+    assert body["cached"] is False
+    assert fake.calls == 0  # hard block skips the classifier
+
+
+def test_kid_whitelist_overrides_global_block(tmp_path: Path) -> None:
+    client, mgr, tok, fake = _lists_setup(tmp_path, FakeClassifier(RuntimeError("must not run")))
+    mgr.global_runtime().blocklist.add("youtube.com")
+    mgr.snapshot()["kid"].whitelist.add("youtube.com")
+    body = _classify(client, tok, "https://www.youtube.com/")
+    assert body["verdict"] == "allow"
+    assert body["reason"] == "whitelisted"  # individual wins over the Global block
+    assert fake.calls == 0
+
+
+def test_kid_blocklist_overrides_global_whitelist(tmp_path: Path) -> None:
+    client, mgr, tok, fake = _lists_setup(tmp_path, FakeClassifier(RuntimeError("must not run")))
+    mgr.global_runtime().whitelist.add("foo.com")
+    mgr.snapshot()["kid"].blocklist.add("foo.com")
+    body = _classify(client, tok, "https://foo.com/")
+    assert body["verdict"] == "block"
+    assert body["reason"] == "blocklisted"  # individual block wins over the Global allow
+    assert fake.calls == 0
+
+
+def test_global_block_applies_to_kid_without_own_rule(tmp_path: Path) -> None:
+    client, mgr, tok, fake = _lists_setup(tmp_path, FakeClassifier(RuntimeError("must not run")))
+    mgr.global_runtime().blocklist.add("evil.com")
+    body = _classify(client, tok, "https://evil.com/")
+    assert body["verdict"] == "block"
+    assert body["reason"] == "blocklisted_global"
+    assert fake.calls == 0
+
+
+def test_global_whitelist_allows_kid_without_own_rule(tmp_path: Path) -> None:
+    client, mgr, tok, fake = _lists_setup(tmp_path, FakeClassifier(RuntimeError("must not run")))
+    mgr.global_runtime().whitelist.add("good.com")
+    body = _classify(client, tok, "https://good.com/")
+    assert body["verdict"] == "allow"
+    assert body["reason"] == "whitelisted_global"
+    assert fake.calls == 0
+
+
+def test_disallowed_and_approved_topics_merged(tmp_path: Path) -> None:
+    client, mgr, tok, fake = _lists_setup(tmp_path)  # default allow classifier
+    mgr.snapshot()["kid"].whitelist.add("kid likes anime")
+    mgr.global_runtime().whitelist.add("global ok topic")
+    mgr.snapshot()["kid"].blocklist.add("kid bad topic")
+    mgr.global_runtime().blocklist.add("global bad topic")
+    body = _classify(client, tok, "https://random.test/page")  # no URL rule matches -> AI
+    assert body["verdict"] == "allow"
+    assert fake.calls == 1
+    assert fake.approved_topics == ("kid likes anime", "global ok topic")
+    assert fake.disallowed_topics == ("kid bad topic", "global bad topic")
+
+
+def test_blocklist_file_change_clears_cache(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes)
+    p = tmp_path / "alice_bl.json"
+    p.write_text(json.dumps(["x.test"]))
+    os.utime(p, (p.stat().st_atime, p.stat().st_mtime + 10))
+    client.post("/classify", json={"url": "https://other.test/"}, headers=_ALICE)
+    assert runtimes["alice"].cache.cleared == 1

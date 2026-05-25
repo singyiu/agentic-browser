@@ -192,16 +192,49 @@ def create_app(
         start = time.monotonic()
         loop = asyncio.get_running_loop()
 
-        # Hot-reload the whitelist; a change invalidates cached verdicts.
-        if await loop.run_in_executor(None, rt.whitelist.reload_if_changed):
+        # Hot-reload this teen's lists + the shared Global lists; any change invalidates the
+        # teen's cached verdicts (Global edits are picked up here lazily, per teen).
+        gl = _pm.global_runtime()
+        changed = False
+        for reloader in (
+            rt.whitelist.reload_if_changed,
+            rt.blocklist.reload_if_changed,
+            gl.whitelist.reload_if_changed,
+            gl.blocklist.reload_if_changed,
+        ):
+            changed = await loop.run_in_executor(None, reloader) or changed
+        if changed:
             await loop.run_in_executor(None, rt.cache.clear)
-        active = rt.whitelist.current()
 
-        # Hard URL allow: authoritative, checked before the cache, classifier skipped.
-        if active.matches_url(url):
+        wl, bl = rt.whitelist.current(), rt.blocklist.current()
+        gwl, gbl = gl.whitelist.current(), gl.blocklist.current()
+
+        # Hard URL rules: authoritative, checked before the cache (classifier skipped).
+        # Individual always wins: kid block, then kid allow, then Global block, Global allow.
+        if bl.matches_url(url):
+            event_log.log("blocklist_block", url=url, url_key=url_key, profile=rt.name)
+            metrics.record_classification("block", (), 0, host)
+            return JSONResponse(_response("block", "blocklisted", 1.0, [], url_key, False, 0))
+        if wl.matches_url(url):
             event_log.log("whitelist_allow", url=url, url_key=url_key, profile=rt.name)
             metrics.record_whitelist_hit(host)
             return JSONResponse(_response("allow", "whitelisted", 1.0, [], url_key, False, 0))
+        if gbl.matches_url(url):
+            event_log.log(
+                "blocklist_block", url=url, url_key=url_key, profile=rt.name, scope="global"
+            )
+            metrics.record_classification("block", (), 0, host)
+            return JSONResponse(
+                _response("block", "blocklisted_global", 1.0, [], url_key, False, 0)
+            )
+        if gwl.matches_url(url):
+            event_log.log(
+                "whitelist_allow", url=url, url_key=url_key, profile=rt.name, scope="global"
+            )
+            metrics.record_whitelist_hit(host)
+            return JSONResponse(
+                _response("allow", "whitelisted_global", 1.0, [], url_key, False, 0)
+            )
 
         cached = await loop.run_in_executor(None, rt.cache.get, url_key)
         if cached is not None:
@@ -216,7 +249,10 @@ def create_app(
         try:
             verdict: Verdict = await asyncio.wait_for(
                 classifier.classify(
-                    body, screenshot_b64=screenshot, approved_topics=active.content_entries
+                    body,
+                    screenshot_b64=screenshot,
+                    approved_topics=(*wl.content_entries, *gwl.content_entries),
+                    disallowed_topics=(*bl.content_entries, *gbl.content_entries),
                 ),
                 timeout=config.classify_timeout_s,
             )
