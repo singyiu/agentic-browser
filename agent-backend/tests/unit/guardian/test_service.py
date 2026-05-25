@@ -55,9 +55,11 @@ class FakeClassifier:
         *,
         screenshot_b64: str | None = None,
         approved_topics: tuple[str, ...] = (),
+        disallowed_topics: tuple[str, ...] = (),
     ):
         self.calls += 1
         self.approved_topics = approved_topics
+        self.disallowed_topics = disallowed_topics
         if isinstance(self._result, Exception):
             raise self._result
         return self._result

@@ -109,3 +109,32 @@ async def test_no_approved_topics_omits_block(tmp_path: Path) -> None:
     system_prompt = captured["system_prompt"]
     assert isinstance(system_prompt, str)
     assert "PARENT-APPROVED" not in system_prompt
+
+
+async def test_disallowed_topics_injected_into_system_prompt(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_query(*, prompt: str, options: object) -> AsyncIterator[object]:
+        captured["system_prompt"] = options.system_prompt  # type: ignore[attr-defined]
+        yield _result(structured={"verdict": "allow", "confidence": 0.9})
+
+    await Classifier(_config(tmp_path), query_fn=fake_query).classify(
+        {"url": "u"}, disallowed_topics=("online gambling",)
+    )
+    system_prompt = captured["system_prompt"]
+    assert isinstance(system_prompt, str)
+    assert "PARENT-BLOCKED" in system_prompt
+    assert "online gambling" in system_prompt
+
+
+async def test_no_disallowed_topics_omits_block(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_query(*, prompt: str, options: object) -> AsyncIterator[object]:
+        captured["system_prompt"] = options.system_prompt  # type: ignore[attr-defined]
+        yield _result(structured={"verdict": "allow", "confidence": 0.9})
+
+    await Classifier(_config(tmp_path), query_fn=fake_query).classify({"url": "u"})
+    system_prompt = captured["system_prompt"]
+    assert isinstance(system_prompt, str)
+    assert "PARENT-BLOCKED" not in system_prompt

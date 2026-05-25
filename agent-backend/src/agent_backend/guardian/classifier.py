@@ -53,6 +53,22 @@ def _approved_block(topics: tuple[str, ...]) -> str:
     )
 
 
+def _disallowed_block(topics: tuple[str, ...]) -> str:
+    """Render the parent-blocked-topics section appended to the system prompt.
+
+    Symmetric to ``_approved_block``: topics are injected VERBATIM, so only parent-controlled
+    input (the PIN-gated blocklist) must ever reach ``disallowed_topics``. Empty -> empty string.
+    """
+    if not topics:
+        return ""
+    listed = "\n".join(f"- {topic}" for topic in topics)
+    return (
+        "\n\nPARENT-BLOCKED TOPICS:\n"
+        "The parent has explicitly disallowed the following topics for this child. If the page "
+        'is clearly about one of these, return "block" with high confidence:\n' + listed
+    )
+
+
 class Classifier:
     def __init__(self, config: GuardianConfig, *, query_fn: Any = query) -> None:
         self._config = config
@@ -60,10 +76,19 @@ class Classifier:
         self._rubric = RUBRIC
         self._lock = asyncio.Lock()
 
-    def _options(self, approved_topics: tuple[str, ...] = ()) -> ClaudeAgentOptions:
+    def _options(
+        self,
+        approved_topics: tuple[str, ...] = (),
+        disallowed_topics: tuple[str, ...] = (),
+    ) -> ClaudeAgentOptions:
         return ClaudeAgentOptions(
             model=self._config.model,
-            system_prompt=_INSTRUCTIONS + self._rubric + _approved_block(approved_topics),
+            system_prompt=(
+                _INSTRUCTIONS
+                + self._rubric
+                + _approved_block(approved_topics)
+                + _disallowed_block(disallowed_topics)
+            ),
             allowed_tools=[],
             disallowed_tools=list(_DISALLOWED),
             permission_mode="bypassPermissions",
@@ -91,6 +116,7 @@ class Classifier:
         *,
         screenshot_b64: str | None = None,
         approved_topics: tuple[str, ...] = (),
+        disallowed_topics: tuple[str, ...] = (),
     ) -> Verdict:
         # Vision is gated behind a verified-off flag; until confirmed, screenshots are ignored
         # and the page falls back to text classification (the service then fails open).
@@ -99,7 +125,7 @@ class Classifier:
         try:
             async with self._lock:
                 async for message in self._query(
-                    prompt=prompt, options=self._options(approved_topics)
+                    prompt=prompt, options=self._options(approved_topics, disallowed_topics)
                 ):
                     if isinstance(message, AssistantMessage):
                         for block in message.content:
