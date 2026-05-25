@@ -97,7 +97,15 @@ def test_list_omits_token(tmp_path: Path) -> None:
     mgr = _manager(tmp_path)
     mgr.create("alice")
     listed = mgr.list_profiles()
-    assert listed == [{"name": "alice", "whitelist_count": 0, "pending_count": 0}]
+    by_name = {p["name"]: p for p in listed}
+    assert by_name["alice"] == {
+        "name": "alice",
+        "is_global": False,
+        "whitelist_count": 0,
+        "blocklist_count": 0,
+        "pending_count": 0,
+    }
+    assert by_name["global"]["is_global"] is True
     assert all("token" not in p for p in listed)
 
 
@@ -255,3 +263,47 @@ def test_no_profiles_path_skips_persistence(tmp_path: Path) -> None:
     mgr = _manager(tmp_path, persist=False)
     mgr.create("alice")
     assert not (tmp_path / "profiles.json").exists()
+
+
+# --- Global profile ----------------------------------------------------------
+
+
+def test_global_profile_exists_after_construction(tmp_path: Path) -> None:
+    assert _manager(tmp_path).global_runtime().name == "global"
+
+
+def test_global_not_in_token_auth_snapshot(tmp_path: Path) -> None:
+    mgr = _manager(tmp_path)
+    mgr.create("alice")
+    # Global must never be reachable by a teen token — it is not in the auth snapshot.
+    assert "global" not in mgr.snapshot()
+
+
+def test_global_runtime_has_a_blocklist(tmp_path: Path) -> None:
+    g = _manager(tmp_path).global_runtime()
+    g.blocklist.add("tiktok.com")
+    assert g.blocklist.current().matches_url("https://tiktok.com") is True
+
+
+def test_create_global_name_rejected(tmp_path: Path) -> None:
+    with pytest.raises(InvalidProfileNameError):
+        _manager(tmp_path).create("global")
+
+
+def test_rename_to_global_rejected(tmp_path: Path) -> None:
+    mgr = _manager(tmp_path)
+    mgr.create("alice")
+    with pytest.raises(InvalidProfileNameError):
+        mgr.rename("alice", "global")
+
+
+def test_delete_global_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ProfileNotFoundError):
+        _manager(tmp_path).delete("global")
+
+
+def test_list_profiles_flags_global(tmp_path: Path) -> None:
+    mgr = _manager(tmp_path)
+    mgr.create("alice")
+    flags = {p["name"]: p["is_global"] for p in mgr.list_profiles()}
+    assert flags == {"alice": False, "global": True}

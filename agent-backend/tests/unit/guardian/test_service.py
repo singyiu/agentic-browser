@@ -1102,7 +1102,16 @@ def test_list_profiles_omits_token(tmp_path: Path) -> None:
     client, _ = _pm_client(tmp_path)
     created = client.post("/profiles", json={"name": "alice"}, headers=_PIN).json()
     listed = client.get("/profiles", headers=_PIN).json()["profiles"]
-    assert listed == [{"name": "alice", "whitelist_count": 0, "pending_count": 0}]
+    by_name = {p["name"]: p for p in listed}
+    assert by_name["alice"] == {
+        "name": "alice",
+        "is_global": False,
+        "whitelist_count": 0,
+        "blocklist_count": 0,
+        "pending_count": 0,
+    }
+    assert by_name["global"]["is_global"] is True
+    assert all("token" not in p for p in listed)
     assert created["token"] not in str(listed)
 
 
@@ -1111,7 +1120,8 @@ def test_list_profiles_counts_reflect_whitelist(tmp_path: Path) -> None:
     client.post("/profiles", json={"name": "alice"}, headers=_PIN)
     manager.snapshot()["alice"].whitelist.add("example.com")
     listed = client.get("/profiles", headers=_PIN).json()["profiles"]
-    assert listed[0]["whitelist_count"] == 1
+    alice = next(p for p in listed if p["name"] == "alice")
+    assert alice["whitelist_count"] == 1
 
 
 def test_rename_profile_old_name_gone(tmp_path: Path) -> None:
@@ -1120,7 +1130,7 @@ def test_rename_profile_old_name_gone(tmp_path: Path) -> None:
     resp = client.post("/profiles/alice/rename", json={"new_name": "alicia"}, headers=_PIN)
     assert resp.status_code == 200
     names = {p["name"] for p in client.get("/profiles", headers=_PIN).json()["profiles"]}
-    assert names == {"alicia"}
+    assert names == {"alicia", "global"}
 
 
 def test_rename_profile_target_taken_409(tmp_path: Path) -> None:

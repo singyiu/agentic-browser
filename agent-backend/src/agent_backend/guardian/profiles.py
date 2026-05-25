@@ -22,6 +22,9 @@ from pathlib import Path
 from ..config import ConfigError
 
 DEFAULT_PROFILE_NAME = "default"
+# The shared all-kids profile: no token, no browser. Its allow/block rules are layered
+# under every teen's own rules in the classify() decision path. Reserved as a profile name.
+GLOBAL_PROFILE_NAME = "global"
 PROFILE_DATA_DIR = "data/profiles"
 # A profile name becomes a filesystem directory component, so keep it to a safe slug
 # (rejects path separators and ".."). Public so the manager and HTTP handlers validate

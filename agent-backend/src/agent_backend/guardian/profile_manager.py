@@ -16,6 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from .profiles import (
+    GLOBAL_PROFILE_NAME,
     PROFILE_DATA_DIR,
     PROFILE_NAME_RE,
     Profile,
@@ -51,11 +52,28 @@ def generate_token() -> str:
 
 def _validate_name(name: str) -> str:
     cleaned = name.strip()
-    if not cleaned or len(cleaned) > _MAX_NAME_LEN or not PROFILE_NAME_RE.match(cleaned):
+    if (
+        not cleaned
+        or len(cleaned) > _MAX_NAME_LEN
+        or not PROFILE_NAME_RE.match(cleaned)
+        or cleaned == GLOBAL_PROFILE_NAME
+    ):
         raise InvalidProfileNameError(
-            "Profile name must be 1-64 characters of letters, digits, '-' or '_'."
+            "Profile name must be 1-64 characters of letters, digits, '-' or '_', "
+            f"and cannot be the reserved name {GLOBAL_PROFILE_NAME!r}."
         )
     return cleaned
+
+
+def _summary(rt: ProfileRuntime, *, is_global: bool) -> dict[str, object]:
+    """Token-free metadata for one profile (a kid or Global), for the parent UI."""
+    return {
+        "name": rt.name,
+        "is_global": is_global,
+        "whitelist_count": len(rt.whitelist.current().values),
+        "blocklist_count": len(rt.blocklist.current().values),
+        "pending_count": len(rt.request_store.current().pending()),
+    }
 
 
 class ProfileManager:
@@ -67,13 +85,20 @@ class ProfileManager:
         runtimes: dict[str, ProfileRuntime],
         *,
         profiles_path: str | None,
-        data_dir: str = PROFILE_DATA_DIR,
+        data_dir: str | None = None,
     ) -> None:
         self._profiles = dict(profiles)
         self._runtimes = dict(runtimes)
         self._profiles_path = profiles_path
-        self._data_dir = data_dir
+        # Read the module global when no dir is given, so tests can redirect it (autouse
+        # fixture) and production uses data/profiles/.
+        self._data_dir = data_dir or PROFILE_DATA_DIR
         self._lock = threading.Lock()
+        # The Global profile applies to every teen. It is kept OUT of _runtimes so it can
+        # never be reached by an X-Guardian-Token (no browser uses it); its allow/block
+        # rules persist under <data_dir>/global/ and are re-opened on each startup.
+        gwl, gbl, greq, gcache = default_profile_paths(GLOBAL_PROFILE_NAME, self._data_dir)
+        self._global = build_runtime(Profile(GLOBAL_PROFILE_NAME, "", gwl, gbl, greq, gcache))
 
     # --- reads ---------------------------------------------------------------
 
@@ -82,18 +107,17 @@ class ProfileManager:
         with self._lock:
             return dict(self._runtimes)
 
+    def global_runtime(self) -> ProfileRuntime:
+        """The shared Global profile (its allow + block lists apply to every teen)."""
+        return self._global
+
     def list_profiles(self) -> list[dict[str, object]]:
-        """Per-profile metadata for the parent UI. Never includes the token."""
+        """Metadata for the parent UI: every teen plus Global. Never includes the token."""
         with self._lock:
             runtimes = list(self._runtimes.values())
-        return [
-            {
-                "name": rt.name,
-                "whitelist_count": len(rt.whitelist.current().values),
-                "pending_count": len(rt.request_store.current().pending()),
-            }
-            for rt in runtimes
-        ]
+        listed = [_summary(rt, is_global=False) for rt in runtimes]
+        listed.append(_summary(self._global, is_global=True))
+        return listed
 
     # --- writes --------------------------------------------------------------
 
