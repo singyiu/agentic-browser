@@ -37,6 +37,29 @@ from .runtime import ProfileRuntime, build_runtime
 from .verdict import Verdict
 from .whitelist import WhitelistStore, classify_entry
 
+# Per-URL verdict events shown in the parent Activity view; admin/dwell events are excluded so
+# the timeline reads as "what each kid saw and how it was decided".
+ACTIVITY_EVENTS: tuple[str, ...] = (
+    "allow",
+    "block",
+    "blocklist_block",
+    "whitelist_allow",
+    "cache_hit",
+    "fail_open",
+    "escalate",
+)
+ACTIVITY_LIMIT_DEFAULT = 100
+ACTIVITY_LIMIT_MAX = 500
+
+
+def _parse_activity_limit(raw: str | None) -> int:
+    """Clamp ?limit= to [1, ACTIVITY_LIMIT_MAX]; fall back to the default when absent/invalid."""
+    try:
+        value = ACTIVITY_LIMIT_DEFAULT if raw is None else int(raw)
+    except ValueError:
+        return ACTIVITY_LIMIT_DEFAULT
+    return max(1, min(value, ACTIVITY_LIMIT_MAX))
+
 
 def _ms(start: float) -> int:
     return int((time.monotonic() - start) * 1000)
@@ -648,6 +671,21 @@ def create_app(
     async def review_blocklist(request: Request) -> JSONResponse:
         return await _review_list(request, "blocklist")
 
+    async def review_activity(request: Request) -> JSONResponse:
+        # Read-only parent view of recent per-URL verdicts (PIN-gated). No mutation; admin/dwell
+        # events are filtered out so the timeline shows only what each kid saw and how it ended.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        profile = request.query_params.get("profile", "").strip() or None
+        limit = _parse_activity_limit(request.query_params.get("limit"))
+        loop = asyncio.get_running_loop()
+        events = await loop.run_in_executor(
+            None,
+            functools.partial(event_log.recent, limit, profile=profile, events=ACTIVITY_EVENTS),
+        )
+        return JSONResponse({"events": events})
+
     async def settings_change_pin(request: Request) -> JSONResponse:
         # Rotate the parent PIN. Re-authenticate with the *current* PIN from the body (not the
         # header) so an unlocked-but-unattended tab can't silently change the credential. We
@@ -779,6 +817,7 @@ def create_app(
             Route("/review/decision", review_decision, methods=["POST"]),
             Route("/review/whitelist", review_whitelist, methods=["GET", "POST", "DELETE"]),
             Route("/review/blocklist", review_blocklist, methods=["GET", "POST", "DELETE"]),
+            Route("/review/activity", review_activity, methods=["GET"]),
             Route("/settings/pin", settings_change_pin, methods=["POST"]),
             Route("/profiles", profiles_endpoint, methods=["GET", "POST"]),
             # More-specific paths first so {name} doesn't swallow /rename and /token.

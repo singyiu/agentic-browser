@@ -84,11 +84,23 @@ class FakeCache:
 
 
 class FakeLog:
-    def __init__(self) -> None:
+    def __init__(self, recent: list[dict[str, object]] | None = None) -> None:
         self.events: list[str] = []
+        self._recent = recent if recent is not None else []
+        self.recent_calls: list[dict[str, object]] = []
 
     def log(self, event: str, **fields: object) -> None:
         self.events.append(event)
+
+    def recent(
+        self,
+        limit: int,
+        *,
+        profile: str | None = None,
+        events: object = None,
+    ) -> list[dict[str, object]]:
+        self.recent_calls.append({"limit": limit, "profile": profile, "events": events})
+        return self._recent
 
 
 def _client(
@@ -444,6 +456,76 @@ def test_review_whitelist_delete_removes_entry(tmp_path: Path) -> None:
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
     assert "www.youtube.com" not in wl.current().values
+
+
+# --- activity: parent read-only verdict timeline (PIN-gated) ---
+
+
+def test_review_activity_get_503_when_pin_unset(tmp_path: Path) -> None:
+    client = _client(
+        FakeClassifier(Verdict("allow")),
+        parent_pin="",
+        admin_path=str(tmp_path / "admin.json"),
+    )
+    assert client.get("/review/activity").status_code == 503
+
+
+def test_review_activity_get_403_wrong_pin() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get(
+        "/review/activity", headers={"X-Guardian-Parent-Pin": "wrong"}
+    )
+    assert resp.status_code == 403
+
+
+def test_review_activity_returns_events_from_log() -> None:
+    log = FakeLog(recent=[{"event": "block", "url": "u", "profile": "alice"}])
+    resp = _client(FakeClassifier(Verdict("allow")), log=log).get("/review/activity", headers=_PIN)
+    assert resp.status_code == 200
+    assert resp.json()["events"] == [{"event": "block", "url": "u", "profile": "alice"}]
+
+
+def test_review_activity_passes_profile_and_limit_through() -> None:
+    log = FakeLog()
+    _client(FakeClassifier(Verdict("allow")), log=log).get(
+        "/review/activity?profile=alice&limit=5", headers=_PIN
+    )
+    assert log.recent_calls[0]["profile"] == "alice"
+    assert log.recent_calls[0]["limit"] == 5
+
+
+def test_review_activity_defaults_limit_and_profile_when_absent() -> None:
+    log = FakeLog()
+    _client(FakeClassifier(Verdict("allow")), log=log).get("/review/activity", headers=_PIN)
+    assert log.recent_calls[0]["limit"] == 100  # ACTIVITY_LIMIT_DEFAULT
+    assert log.recent_calls[0]["profile"] is None
+
+
+def test_review_activity_clamps_oversized_limit() -> None:
+    log = FakeLog()
+    _client(FakeClassifier(Verdict("allow")), log=log).get(
+        "/review/activity?limit=99999", headers=_PIN
+    )
+    assert log.recent_calls[0]["limit"] == 500  # ACTIVITY_LIMIT_MAX
+
+
+def test_review_activity_invalid_limit_falls_back_to_default() -> None:
+    log = FakeLog()
+    _client(FakeClassifier(Verdict("allow")), log=log).get(
+        "/review/activity?limit=abc", headers=_PIN
+    )
+    assert log.recent_calls[0]["limit"] == 100
+
+
+def test_review_activity_restricts_to_verdict_events() -> None:
+    log = FakeLog()
+    _client(FakeClassifier(Verdict("allow")), log=log).get("/review/activity", headers=_PIN)
+    passed = log.recent_calls[0]["events"]
+    assert passed is not None
+    assert {"allow", "block", "blocklist_block", "whitelist_allow"} <= set(passed)
+    # admin/dwell noise must never surface as "activity"
+    assert "profile_created" not in passed
+    assert "parent_pin_set" not in passed
+    assert "dwell" not in passed
 
 
 # --- access requests: teen submit + status (token-authed) ---
@@ -1240,9 +1322,7 @@ def _lists_setup(
 
 
 def _classify(client: TestClient, token: str, url: str) -> dict:
-    return client.post(
-        "/classify", json={"url": url}, headers={"X-Guardian-Token": token}
-    ).json()
+    return client.post("/classify", json={"url": url}, headers={"X-Guardian-Token": token}).json()
 
 
 def test_kid_blocklist_hard_blocks(tmp_path: Path) -> None:
