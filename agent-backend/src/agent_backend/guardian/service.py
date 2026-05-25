@@ -32,7 +32,7 @@ from .profile_manager import (
     ProfileManager,
     ProfileNotFoundError,
 )
-from .profiles import DEFAULT_PROFILE_NAME, ProfileRegistry
+from .profiles import DEFAULT_PROFILE_NAME, GLOBAL_PROFILE_NAME, ProfileRegistry
 from .runtime import ProfileRuntime, build_runtime
 from .verdict import Verdict
 from .whitelist import WhitelistStore, classify_entry
@@ -570,12 +570,15 @@ def create_app(
         return JSONResponse({"id": decided.id, "status": decided.status})
 
     def _resolve_parent_profile(name: str) -> ProfileRuntime | None:
-        """Pick the profile a parent whitelist write targets.
+        """Pick the profile a parent list write targets.
 
         Parents authenticate with the PIN (not a teen token), so the request carries no
-        profile. Use the explicitly named profile, else the sole profile when there is only
-        one teen (the common case); an ambiguous multi-teen write must name one.
+        profile. ``"global"`` targets the shared Global profile; an explicit teen name targets
+        that teen; an empty name auto-resolves to the sole teen (the common case), else an
+        ambiguous multi-teen write must name one.
         """
+        if name == GLOBAL_PROFILE_NAME:
+            return _pm.global_runtime()
         current = _pm.snapshot()
         if name:
             return current.get(name)
@@ -583,17 +586,30 @@ def create_app(
             return next(iter(current.values()))
         return None
 
-    async def review_whitelist(request: Request) -> JSONResponse:
-        # Parent-facing whitelist management, gated by the PIN (the teen-token /whitelist is the
-        # extension's path). GET aggregates across teens; a write targets one teen's store.
+    async def _clear_caches_after_list_change(rt: ProfileRuntime) -> None:
+        # A Global edit affects every teen, so clear all teen caches; a per-teen edit clears
+        # just that teen's. (Hard URL rules are checked before the cache, so this matters
+        # mainly for natural-language topic edits, which only the AI path consults.)
+        loop = asyncio.get_running_loop()
+        targets = list(_pm.snapshot().values()) if rt.name == GLOBAL_PROFILE_NAME else [rt]
+        for target in targets:
+            await loop.run_in_executor(None, target.cache.clear)
+
+    async def _review_list(request: Request, kind: str) -> JSONResponse:
+        # Shared parent-facing allow/deny list management (kind = "whitelist" | "blocklist"),
+        # gated by the PIN (the teen-token /whitelist is the extension's path). GET aggregates
+        # across every teen + Global; a write targets one profile's store.
         guard = _require_pin(request)
         if guard is not None:
             return guard
+        runtimes = [*_pm.snapshot().values(), _pm.global_runtime()]
         if request.method == "GET":
             entries = [
                 {"value": value, "type": classify_entry(value), "profile": rt.name}
-                for rt in _pm.snapshot().values()
-                for value in rt.whitelist.current().values
+                for rt in runtimes
+                for value in (rt.blocklist if kind == "blocklist" else rt.whitelist)
+                .current()
+                .values
             ]
             return JSONResponse({"entries": entries})
         try:
@@ -601,8 +617,8 @@ def create_app(
         except Exception:  # noqa: BLE001
             return JSONResponse({"error": "invalid JSON body"}, status_code=422)
         entry = str(body.get("entry", "")).strip()
-        # Same guard as POST /whitelist: a single bounded line (content entries are injected
-        # verbatim into the classifier prompt, so reject newlines / control chars).
+        # A single bounded line (entries are injected verbatim into the classifier prompt, so
+        # reject newlines / control chars).
         if not entry or len(entry) > 512 or not entry.isprintable():
             return JSONResponse(
                 {"error": "entry must be a non-empty, single-line string (max 512 chars)"},
@@ -611,20 +627,26 @@ def create_app(
         rt = _resolve_parent_profile(str(body.get("profile", "")).strip())
         if rt is None:
             return JSONResponse({"error": "profile required"}, status_code=422)
+        store = rt.blocklist if kind == "blocklist" else rt.whitelist
         loop = asyncio.get_running_loop()
         try:
             if request.method == "POST":
-                await loop.run_in_executor(None, rt.whitelist.add, entry)
+                await loop.run_in_executor(None, store.add, entry)
             else:  # DELETE
-                await loop.run_in_executor(None, rt.whitelist.remove, entry)
-            # A whitelist change invalidates cached verdicts.
-            await loop.run_in_executor(None, rt.cache.clear)
+                await loop.run_in_executor(None, store.remove, entry)
+            await _clear_caches_after_list_change(rt)
         except OSError:
-            return JSONResponse({"error": "whitelist write failed"}, status_code=500)
-        event_log.log(f"parent_whitelist_{request.method.lower()}", entry=entry, profile=rt.name)
+            return JSONResponse({"error": f"{kind} write failed"}, status_code=500)
+        event_log.log(f"parent_{kind}_{request.method.lower()}", entry=entry, profile=rt.name)
         if request.method == "POST":
             return JSONResponse({"value": entry, "type": classify_entry(entry)})
         return JSONResponse({"ok": True})
+
+    async def review_whitelist(request: Request) -> JSONResponse:
+        return await _review_list(request, "whitelist")
+
+    async def review_blocklist(request: Request) -> JSONResponse:
+        return await _review_list(request, "blocklist")
 
     async def settings_change_pin(request: Request) -> JSONResponse:
         # Rotate the parent PIN. Re-authenticate with the *current* PIN from the body (not the
@@ -756,6 +778,7 @@ def create_app(
             Route("/review/requests", review_requests, methods=["GET"]),
             Route("/review/decision", review_decision, methods=["POST"]),
             Route("/review/whitelist", review_whitelist, methods=["GET", "POST", "DELETE"]),
+            Route("/review/blocklist", review_blocklist, methods=["GET", "POST", "DELETE"]),
             Route("/settings/pin", settings_change_pin, methods=["POST"]),
             Route("/profiles", profiles_endpoint, methods=["GET", "POST"]),
             # More-specific paths first so {name} doesn't swallow /rename and /token.

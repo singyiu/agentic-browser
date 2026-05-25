@@ -1314,3 +1314,63 @@ def test_blocklist_file_change_clears_cache(tmp_path: Path) -> None:
     os.utime(p, (p.stat().st_atime, p.stat().st_mtime + 10))
     client.post("/classify", json={"url": "https://other.test/"}, headers=_ALICE)
     assert runtimes["alice"].cache.cleared == 1
+
+
+# --- parent blocklist management (/review/blocklist, mirrors /review/whitelist) -------------
+
+
+def test_review_blocklist_requires_pin(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    assert client.get("/review/blocklist").status_code == 403
+
+
+def test_review_blocklist_post_then_get_lists_it(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    r = client.post(
+        "/review/blocklist", json={"entry": "tiktok.com", "profile": "alice"}, headers=_PIN
+    )
+    assert r.status_code == 200
+    assert r.json() == {"value": "tiktok.com", "type": "exact"}
+    entries = client.get("/review/blocklist", headers=_PIN).json()["entries"]
+    assert {"value": "tiktok.com", "type": "exact", "profile": "alice"} in entries
+
+
+def test_review_blocklist_requires_profile_when_multi(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path))
+    r = client.post("/review/blocklist", json={"entry": "x.com"}, headers=_PIN)
+    assert r.status_code == 422
+
+
+def test_review_blocklist_is_isolated_per_profile(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes)
+    client.post("/review/blocklist", json={"entry": "x.com", "profile": "alice"}, headers=_PIN)
+    assert "x.com" in runtimes["alice"].blocklist.current().values
+    assert runtimes["bob"].blocklist.current().values == ()
+
+
+def test_review_blocklist_targets_global(tmp_path: Path) -> None:
+    client, mgr = _pm_client(tmp_path)
+    r = client.post(
+        "/review/blocklist", json={"entry": "evil.com", "profile": "global"}, headers=_PIN
+    )
+    assert r.status_code == 200
+    assert "evil.com" in mgr.global_runtime().blocklist.current().values
+
+
+def test_review_whitelist_targets_global(tmp_path: Path) -> None:
+    client, mgr = _pm_client(tmp_path)
+    r = client.post(
+        "/review/whitelist", json={"entry": "good.com", "profile": "global"}, headers=_PIN
+    )
+    assert r.status_code == 200
+    assert "good.com" in mgr.global_runtime().whitelist.current().values
+
+
+def test_global_list_edit_clears_every_teen_cache(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes)
+    client.post("/review/blocklist", json={"entry": "sometopic", "profile": "global"}, headers=_PIN)
+    assert runtimes["alice"].cache.cleared >= 1
+    assert runtimes["bob"].cache.cleared >= 1
