@@ -93,3 +93,152 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   return false;
 });
+
+/* --- Kid-safe search enforcement -------------------------------------------------------------
+   Intercept search/prompt submissions in-page — traditional search boxes AND AI-chat inputs on
+   ChatGPT / Claude / Perplexity — check the typed query with the guardian, and block unsafe ones.
+   The check is async, so we HOLD the submission (preventDefault + stopImmediatePropagation), ask
+   the backend via the service worker (a content script can't call it directly — CORS), then
+   either replay the user's action (allowed, or unknown => fail-open) or show the search block
+   page. Capture-phase, delegated listeners on document handle dynamically-rendered SPA inputs. */
+
+const AI_CHAT_HOSTS = new Set([
+  "chatgpt.com",
+  "chat.openai.com",
+  "claude.ai",
+  "perplexity.ai",
+]);
+const SEARCH_INPUT_SELECTOR =
+  'input[type="search"], input[name="q"], input[name="search_query"], input[name="p"], form[role="search"] input';
+const SEND_BUTTON_SELECTOR =
+  'button[type="submit"], button[data-testid="send-button"], button[aria-label*="send" i]';
+
+let _replaying = false; // true while we re-issue an allowed submission, so our handlers skip it
+
+function isChatHost() {
+  return AI_CHAT_HOSTS.has(location.hostname.replace(/^www\./, ""));
+}
+
+function chatInputText(target) {
+  if (!isChatHost() || !target) return "";
+  if (target.tagName === "TEXTAREA") return (target.value || "").trim();
+  if (target.isContentEditable && typeof target.closest === "function") {
+    const root = target.closest("[contenteditable='true']") || target;
+    return (root.innerText || "").trim();
+  }
+  return "";
+}
+
+function searchInputText(target) {
+  if (!target || typeof target.matches !== "function") return "";
+  return target.matches(SEARCH_INPUT_SELECTOR)
+    ? (target.value || "").trim()
+    : "";
+}
+
+function findSendButton(target) {
+  const scope =
+    (target.closest && target.closest("form, [role='dialog'], main")) ||
+    document.body ||
+    document;
+  return scope.querySelector(SEND_BUTTON_SELECTOR);
+}
+
+function navigateToBlockPage(reason, query) {
+  const params = new URLSearchParams({
+    reason: reason || "This search isn't allowed.",
+    url: location.href,
+    kind: "search",
+    query,
+  });
+  location.replace(
+    chrome.runtime.getURL("block.html") + "?" + params.toString(),
+  );
+}
+
+// Ask the SW to classify the query, then either block or replay the held action. Fail-open: any
+// error (or a missing verdict) replays the action so an allowed search is never broken.
+async function guardThenReplay(query, replay) {
+  let result = null;
+  try {
+    result = await chrome.runtime.sendMessage({
+      type: "CLASSIFY_SEARCH",
+      query,
+    });
+  } catch (_e) {
+    result = null;
+  }
+  if (result && result.verdict === "block") {
+    navigateToBlockPage(result.reason, query);
+    return;
+  }
+  _replaying = true;
+  try {
+    replay();
+  } catch (_e) {
+    /* the query was allowed; if the replay fails there is nothing to block */
+  } finally {
+    setTimeout(() => {
+      _replaying = false;
+    }, 0);
+  }
+}
+
+function replayKeydown(target) {
+  if (isChatHost()) {
+    const btn = findSendButton(target);
+    if (btn) {
+      btn.click();
+      return;
+    }
+  } else if (target.form) {
+    target.form.submit();
+    return;
+  }
+  target.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+async function onKeydownCapture(e) {
+  if (_replaying || e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+  const query = chatInputText(e.target) || searchInputText(e.target);
+  if (!query) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  await guardThenReplay(query, () => replayKeydown(e.target));
+}
+
+async function onSubmitCapture(e) {
+  if (_replaying) return;
+  const form = e.target;
+  if (!form || typeof form.querySelector !== "function") return;
+  const input = form.querySelector(SEARCH_INPUT_SELECTOR);
+  const query = input ? (input.value || "").trim() : "";
+  if (!query) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  await guardThenReplay(query, () => form.submit());
+}
+
+async function onClickCapture(e) {
+  if (_replaying || !isChatHost()) return;
+  const target = e.target;
+  if (!target || typeof target.closest !== "function") return;
+  const btn = target.closest(SEND_BUTTON_SELECTOR);
+  if (!btn) return;
+  const input = document.querySelector("textarea, [contenteditable='true']");
+  const query = input ? (input.value || input.innerText || "").trim() : "";
+  if (!query) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  await guardThenReplay(query, () => btn.click());
+}
+
+document.addEventListener("keydown", onKeydownCapture, true);
+document.addEventListener("submit", onSubmitCapture, true);
+document.addEventListener("click", onClickCapture, true);
