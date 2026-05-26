@@ -9,6 +9,7 @@ from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 from agent_backend.guardian.classifier import Classifier
 from agent_backend.guardian.config import GuardianConfig
+from agent_backend.guardian.verdict import Verdict
 
 
 def _config(tmp_path: Path) -> GuardianConfig:
@@ -200,3 +201,65 @@ async def test_default_prompt_is_instructions_plus_rubric_only(tmp_path: Path) -
     from agent_backend.guardian.rubric import rubric
 
     assert await _system_prompt_for(tmp_path) == _instructions(10) + rubric(10)
+
+
+# --- classify_search_query (bare search-query safety filter) ----------------
+
+
+async def _search_query_with(tmp_path: Path, response: str, **kwargs: object) -> Verdict:
+    """Run classify_search_query against a fake one-shot query that returns ``response``."""
+
+    async def fake_query(*, prompt: str, options: object) -> AsyncIterator[object]:
+        yield _assistant(response)
+        yield _result()
+
+    return await Classifier(_config(tmp_path), query_fn=fake_query).classify_search_query(
+        "some query", **kwargs  # type: ignore[arg-type]
+    )
+
+
+async def test_search_parses_block(tmp_path: Path) -> None:
+    verdict = await _search_query_with(
+        tmp_path, '{"verdict":"block","reason":"adult","confidence":0.95}'
+    )
+    assert verdict.verdict == "block"
+
+
+async def test_search_parses_allow(tmp_path: Path) -> None:
+    verdict = await _search_query_with(tmp_path, '{"verdict":"allow","reason":"fine"}')
+    assert verdict.verdict == "allow"
+
+
+async def test_search_need_screenshot_coerced_to_allow(tmp_path: Path) -> None:
+    # A bare query has nothing to screenshot; any non-block verdict must become allow.
+    verdict = await _search_query_with(tmp_path, '{"verdict":"need_screenshot","reason":"x"}')
+    assert verdict.verdict == "allow"
+
+
+async def test_search_fails_open_on_error(tmp_path: Path) -> None:
+    async def boom(*, prompt: str, options: object) -> AsyncIterator[object]:
+        raise RuntimeError("transport boom")
+        yield  # pragma: no cover - makes this an async generator
+
+    verdict = await Classifier(_config(tmp_path), query_fn=boom).classify_search_query("q")
+    assert verdict.verdict == "allow"
+
+
+async def test_search_system_prompt_has_age_and_policy(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_query(*, prompt: str, options: object) -> AsyncIterator[object]:
+        captured["system_prompt"] = options.system_prompt  # type: ignore[attr-defined]
+        captured["prompt"] = prompt
+        yield _result(structured={"verdict": "allow"})
+
+    await Classifier(_config(tmp_path), query_fn=fake_query).classify_search_query(
+        "minecraft", age=9, policy="\n\nHOUSEHOLD: be strict."
+    )
+    system_prompt = captured["system_prompt"]
+    assert isinstance(system_prompt, str)
+    assert "9-year-old" in system_prompt
+    assert "search filter" in system_prompt
+    assert "HOUSEHOLD: be strict." in system_prompt
+    assert '{"verdict":"allow"|"block"' in system_prompt  # JSON braces survive substitution
+    assert captured["prompt"] == "Search query: minecraft"
