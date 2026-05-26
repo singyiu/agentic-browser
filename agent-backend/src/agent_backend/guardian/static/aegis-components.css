@@ -99,6 +99,29 @@ input:focus, textarea:focus {
 }
 textarea { resize: vertical; line-height: 1.5; }
 
+/* ----- Select / dropdown (design-system control: ~2x the native height, larger type) ----- */
+select {
+  font-family: var(--font-sans);
+  font-size: var(--size-md);
+  color: var(--fg-1);
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  min-height: 48px;
+  line-height: var(--lh-snug);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out);
+  outline: none;
+}
+select:focus {
+  border-color: var(--aegis-terracotta);
+  box-shadow: 0 0 0 4px var(--aegis-terracotta-soft);
+  background: var(--aegis-cream);
+}
+
 /* ----- Cards ----- */
 .card {
   background: var(--bg-2);
