@@ -114,7 +114,8 @@ rules above.
 - **Parent dashboard:** open `http://127.0.0.1:2947/` and enter your PIN. A collapsible sidebar
   holds **Dashboard** (at-a-glance counts), **Profiles** (create/rename/delete each kid and mint
   their browser token — see *Multiple teen profiles* below), **Requests** (the review queue —
-  `/review` now redirects here), **Lists** (per-profile and Global allow + block lists; a kid's
+  `/review` now redirects here), **Activity** (a read-only timeline of recent allows & blocks per
+  kid), **Lists** (per-profile and Global allow + block lists; a kid's
   own rule beats Global, and a blocklisted site/topic is hard-blocked), and
   **Settings** (change the PIN). Pending requests show the URL, why it was blocked, the kid's note,
   and an **editable
@@ -150,6 +151,8 @@ curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/j
 curl -s -H "X-Guardian-Parent-Pin: $PIN" http://127.0.0.1:2947/review/whitelist
 curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/json' \
   -d '{"entry":"tiktok.com","profile":"global"}' http://127.0.0.1:2947/review/blocklist
+# Read-only recent activity (verdict timeline); ?profile=<kid> and ?limit=<n> are optional.
+curl -s -H "X-Guardian-Parent-Pin: $PIN" "http://127.0.0.1:2947/review/activity?limit=50"
 curl -s -X POST -H "X-Guardian-Parent-Pin: $PIN" -H 'Content-Type: application/json' \
   -d '{"current_pin":"'"$PIN"'","new_pin":"4321"}' http://127.0.0.1:2947/settings/pin
 
@@ -173,7 +176,7 @@ places because the guardian and the extension ship as separate units with no bui
 
 The home dashboard's collapsible sidebar adds three **guardian-only** files (not shipped to the
 extension): `aegis-shell.css` (app-shell layout), `shell.js` (the unlock gate, hash router, and the
-Dashboard / Requests / Whitelist / Settings sections), and `profiles.js` (the Profiles section).
+Dashboard / Requests / Activity / Lists / Settings sections), and `profiles.js` (the Profiles section).
 
 Fonts (Manrope, Instrument Serif, JetBrains Mono) are **self-hosted** under each `fonts/` dir — no
 Google Fonts or other third-party calls, so the pages render fully offline. The canonical token source

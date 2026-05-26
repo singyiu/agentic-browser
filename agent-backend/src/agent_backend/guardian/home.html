@@ -113,6 +113,24 @@
               </a>
             </li>
             <li>
+              <a id="nav-activity" class="nav-item" href="#/activity">
+                <span class="nav-item__icon">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                  </svg>
+                </span>
+                <span class="nav-item__label">Activity</span>
+              </a>
+            </li>
+            <li>
               <a id="nav-whitelist" class="nav-item" href="#/whitelist">
                 <span class="nav-item__icon">
                   <svg
@@ -299,6 +317,29 @@
             <p id="req-recent-empty" class="muted" hidden>
               Nothing decided yet.
             </p>
+          </section>
+
+          <section
+            id="sec-activity"
+            class="shell-section"
+            tabindex="-1"
+            aria-label="Activity"
+            hidden
+          >
+            <h1>Activity</h1>
+            <p class="muted">
+              Recent pages your kids opened and how Aegis decided. Read-only —
+              to change a rule, use Lists or Requests.
+            </p>
+            <div class="card">
+              <label class="settings-field" for="act-profile">Profile</label>
+              <select id="act-profile" class="wl-profile-select"></select>
+              <button id="act-refresh" class="primary" type="button">
+                Refresh
+              </button>
+            </div>
+            <div id="act-list"></div>
+            <p id="act-empty" class="muted" hidden>No activity yet.</p>
           </section>
 
           <section

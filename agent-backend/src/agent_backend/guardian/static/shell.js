@@ -72,6 +72,7 @@
     "dashboard",
     "profiles",
     "requests",
+    "activity",
     "whitelist",
     "settings",
   ];
@@ -148,15 +149,21 @@
     verb: "block",
   };
 
-  async function populateProfileSelect() {
-    let r;
+  // Shared by the Lists profile picker and the Activity filter: returns the profiles array,
+  // or null on any failure (caller leaves its current options untouched).
+  async function fetchProfiles() {
     try {
-      r = await api("/profiles");
+      const r = await api("/profiles");
+      if (!r.ok) return null;
+      return (await r.json()).profiles || [];
     } catch (_e) {
-      return;
+      return null;
     }
-    if (!r.ok) return;
-    const profiles = (await r.json()).profiles || [];
+  }
+
+  async function populateProfileSelect() {
+    const profiles = await fetchProfiles();
+    if (!profiles) return;
     const sel = $("wl-profile");
     const prev = sel.value;
     sel.replaceChildren(
@@ -415,10 +422,90 @@
     }
   }
 
+  /* Activity — read-only timeline of recent per-URL verdicts (GET /review/activity),
+     filtered by the kid chosen in #act-profile ("All profiles" = every kid). A Global-scope
+     rule is attributed to the kid it affected and tagged "global rule". */
+  function activityVerdict(ev) {
+    if (ev.event === "cache_hit")
+      return ev.verdict === "block"
+        ? { label: "blocked", badge: "rejected" }
+        : { label: "allowed", badge: "approved" };
+    const map = {
+      allow: { label: "allowed", badge: "approved" },
+      whitelist_allow: { label: "allowed", badge: "approved" },
+      fail_open: { label: "allowed", badge: "approved" },
+      block: { label: "blocked", badge: "rejected" },
+      blocklist_block: { label: "blocked", badge: "rejected" },
+      escalate: { label: "checking", badge: "profile" },
+    };
+    return map[ev.event] || { label: ev.event, badge: "profile" };
+  }
+
+  function activityRow(ev) {
+    const v = activityVerdict(ev);
+    const target = ev.url || ev.url_key || "";
+    const link = safeHref(target)
+      ? el("a", {
+          href: target,
+          target: "_blank",
+          rel: "noopener noreferrer",
+          class: "url",
+          text: target,
+        })
+      : el("span", { class: "url", text: target });
+    return el(
+      "div",
+      { class: "recent-row" },
+      el("span", { class: "badge " + v.badge, text: v.label }),
+      ev.profile
+        ? el("span", { class: "badge profile", text: ev.profile })
+        : null,
+      ev.scope === "global"
+        ? el("span", { class: "badge", text: "global rule" })
+        : null,
+      link,
+      el("span", { class: "muted", text: timeAgo(ev.ts) }),
+    );
+  }
+
+  async function populateActivityProfiles() {
+    const profiles = await fetchProfiles();
+    if (!profiles) return;
+    const sel = $("act-profile");
+    const prev = sel.value;
+    const teens = profiles.filter((p) => !p.is_global).map((p) => p.name);
+    sel.replaceChildren(
+      el("option", { value: "", text: "All profiles" }),
+      ...teens.map((name) => el("option", { value: name, text: name })),
+    );
+    if (teens.includes(prev)) sel.value = prev;
+  }
+
+  async function loadActivity() {
+    await populateActivityProfiles();
+    const profile = $("act-profile").value;
+    const qs = profile ? "?profile=" + encodeURIComponent(profile) : "";
+    let r;
+    try {
+      r = await api("/review/activity" + qs);
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (!r.ok) {
+      toast("Could not load activity (" + r.status + ").");
+      return;
+    }
+    const events = (await r.json()).events || [];
+    $("act-list").replaceChildren(...events.map(activityRow));
+    $("act-empty").hidden = events.length > 0;
+  }
+
   function loadSection(key) {
     if (key === "dashboard") loadDashboard();
     else if (key === "profiles" && Aegis.loadProfiles) Aegis.loadProfiles();
     else if (key === "requests") loadRequests();
+    else if (key === "activity") loadActivity();
     else if (key === "whitelist") loadLists();
     // "settings" is a static form — nothing to fetch.
   }
@@ -622,6 +709,8 @@
       if (e.key === "Enter") addListEntry(BLOCK);
     });
     $("wl-profile").addEventListener("change", loadLists);
+    $("act-profile").addEventListener("change", loadActivity);
+    $("act-refresh").addEventListener("click", loadActivity);
     $("set-pin-btn").addEventListener("click", submitChangePin);
     $("set-pin-new").addEventListener("input", validatePinMatch);
     $("set-pin-confirm").addEventListener("input", validatePinMatch);
