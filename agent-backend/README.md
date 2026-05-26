@@ -115,7 +115,7 @@ rules above.
   holds **Dashboard** (at-a-glance counts), **Profiles** (create/rename/delete each kid and mint
   their browser token — see *Multiple teen profiles* below), **Requests** (the review queue —
   `/review` now redirects here), **Activity** (a read-only timeline of recent allows & blocks per
-  kid), **Web Page Classification** (per-profile and Global classification prompts — age-aware
+  kid), **Guard** (per-profile and Global classification prompts — age-aware
   and merged Global+kid — plus allow + block lists; a kid's own rule beats Global, and a
   blocklisted site/topic is hard-blocked), and
   **Settings** (change the PIN). Pending requests show the URL, why it was blocked, the kid's note,
@@ -182,7 +182,7 @@ places because the guardian and the extension ship as separate units with no bui
 
 The home dashboard's collapsible sidebar adds three **guardian-only** files (not shipped to the
 extension): `aegis-shell.css` (app-shell layout), `shell.js` (the unlock gate, hash router, and the
-Dashboard / Requests / Activity / Web Page Classification / Settings sections), and `profiles.js` (the Profiles section).
+Dashboard / Requests / Activity / Guard / Settings sections), and `profiles.js` (the Profiles section).
 
 Fonts (Manrope, Instrument Serif, JetBrains Mono) are **self-hosted** under each `fonts/` dir — no
 Google Fonts or other third-party calls, so the pages render fully offline. The canonical token source

@@ -47,7 +47,7 @@
       card.append(
         el("p", {
           class: "muted",
-          text: "Applies to every kid, checked after each kid's own rules. Edit its prompt and allow/block lists in the Web Page Classification section.",
+          text: "Applies to every kid, checked after each kid's own rules. Edit its prompt and allow/block lists in the Guard section.",
         }),
       );
       return card;

@@ -122,7 +122,7 @@ select:focus {
   background: var(--aegis-cream);
 }
 
-/* ----- Classification-prompt editor (Web Page Classification page) ----- */
+/* ----- Classification-prompt editor (Guard page) ----- */
 #cp-prompt { width: 100%; min-height: 9rem; resize: vertical; }
 .cp-age-field { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
 .cp-age-input { width: 6rem; }
