@@ -435,6 +435,61 @@
             </div>
             <div id="bl-list"></div>
             <p id="bl-empty" class="muted" hidden>No block entries yet.</p>
+
+            <h2>Search keywords — allow</h2>
+            <p class="muted">
+              Always allow these words or phrases in any search box or AI chat,
+              even if a broader rule would block them.
+            </p>
+            <div class="card">
+              <label class="settings-field" for="sk-entry"
+                >Allow a search keyword</label
+              >
+              <div class="wl-add">
+                <input
+                  id="sk-entry"
+                  type="text"
+                  maxlength="512"
+                  placeholder="e.g. minecraft, “science fair”"
+                />
+                <button id="sk-add-btn" class="primary" type="button">
+                  Add
+                </button>
+              </div>
+              <p id="sk-hint" class="hint" aria-live="polite"></p>
+            </div>
+            <div id="sk-list"></div>
+            <p id="sk-empty" class="muted" hidden>
+              No search allow keywords yet.
+            </p>
+
+            <h2>Search keywords — block</h2>
+            <p class="muted">
+              Block searches and AI-chat prompts that contain these words or
+              phrases (whole-word, case-insensitive). Clearly unsafe searches
+              are also caught automatically.
+            </p>
+            <div class="card">
+              <label class="settings-field" for="skb-entry"
+                >Block a search keyword</label
+              >
+              <div class="wl-add">
+                <input
+                  id="skb-entry"
+                  type="text"
+                  maxlength="512"
+                  placeholder="e.g. gambling, “buy vapes”"
+                />
+                <button id="skb-add-btn" class="primary" type="button">
+                  Add
+                </button>
+              </div>
+              <p id="skb-hint" class="hint" aria-live="polite"></p>
+            </div>
+            <div id="skb-list"></div>
+            <p id="skb-empty" class="muted" hidden>
+              No search block keywords yet.
+            </p>
           </section>
 
           <section

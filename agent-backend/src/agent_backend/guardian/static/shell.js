@@ -148,6 +148,28 @@
     badgeClass: "badge rejected",
     verb: "block",
   };
+  const SK_ALLOW = {
+    endpoint: "/review/search-keywords/allow",
+    list: "sk-list",
+    empty: "sk-empty",
+    entry: "sk-entry",
+    hint: "sk-hint",
+    badgeClass: "badge profile",
+    badgeText: "keyword",
+    noun: "search keyword",
+    verb: "allow",
+  };
+  const SK_BLOCK = {
+    endpoint: "/review/search-keywords/block",
+    list: "skb-list",
+    empty: "skb-empty",
+    entry: "skb-entry",
+    hint: "skb-hint",
+    badgeClass: "badge rejected",
+    badgeText: "keyword",
+    noun: "search keyword",
+    verb: "block",
+  };
 
   // Shared by the Lists profile picker and the Activity filter: returns the profiles array,
   // or null on any failure (caller leaves its current options untouched).
@@ -199,6 +221,25 @@
     if (wl.ok) renderList(ALLOW, byProfile((await wl.json()).entries, profile));
     if (bl.ok) renderList(BLOCK, byProfile((await bl.json()).entries, profile));
     await loadPrompt();
+    await loadSearchKeywords();
+  }
+
+  // The selected profile's search-keyword allow/block lists (parent-managed under Guard).
+  async function loadSearchKeywords() {
+    const profile = $("wl-profile").value;
+    let ska, skb;
+    try {
+      [ska, skb] = await Promise.all([
+        api(SK_ALLOW.endpoint),
+        api(SK_BLOCK.endpoint),
+      ]);
+    } catch (_e) {
+      return;
+    }
+    if (ska.ok)
+      renderList(SK_ALLOW, byProfile((await ska.json()).entries, profile));
+    if (skb.ok)
+      renderList(SK_BLOCK, byProfile((await skb.json()).entries, profile));
   }
 
   // The selected profile's classification prompt: stored text in the textarea, the age-band
@@ -297,7 +338,10 @@
       el(
         "span",
         { class: "wl-row__meta" },
-        el("span", { class: cfg.badgeClass, text: entry.type }),
+        el("span", {
+          class: cfg.badgeClass,
+          text: entry.type || cfg.badgeText || "",
+        }),
         remove,
       ),
     );
@@ -311,7 +355,8 @@
     hint.textContent = "";
     if (!value) {
       hint.className = "hint bad";
-      hint.textContent = "Enter a site or topic to " + cfg.verb + ".";
+      hint.textContent =
+        "Enter a " + (cfg.noun || "site or topic") + " to " + cfg.verb + ".";
       return;
     }
     let r;
@@ -382,51 +427,58 @@
 
   function pendingCard(req) {
     const card = el("div", { class: "card" });
-    const link = safeHref(req.url)
-      ? el("a", {
-          href: req.url,
-          target: "_blank",
-          rel: "noopener noreferrer",
-          class: "url",
-          text: req.url,
-        })
-      : el("span", { class: "url", text: req.url });
+    const isSearch = req.kind === "search";
+    const head = isSearch
+      ? el("span", { class: "url", text: "Search: " + (req.keyword || "") })
+      : safeHref(req.url)
+        ? el("a", {
+            href: req.url,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            class: "url",
+            text: req.url,
+          })
+        : el("span", { class: "url", text: req.url });
     const meta = el(
       "span",
       { class: "meta" },
       req.profile
         ? el("span", { class: "badge profile", text: req.profile })
         : null,
-      el("span", { class: "host", text: req.host || "" }),
+      isSearch ? null : el("span", { class: "host", text: req.host || "" }),
     );
-    card.append(el("div", { class: "head" }, link, meta));
+    card.append(el("div", { class: "head" }, head, meta));
     if (req.reason)
       card.append(el("p", { class: "reason", text: "Blocked: " + req.reason }));
     if (req.note)
       card.append(el("p", { class: "note", text: "Note: " + req.note }));
     card.append(el("p", { class: "muted", text: timeAgo(req.created_ts) }));
 
-    card.append(
-      el("label", {
-        class: "entry-label",
-        text: "Allow (edit to broaden — e.g. host/* or a topic like “BeyBlade anime”):",
-      }),
-    );
-    const entry = el("input", {
-      class: "entry",
-      "aria-label": "Whitelist entry",
-    });
-    entry.value = req.url;
-    card.append(entry);
-
     const approve = el("button", {
       class: "approve",
       type: "button",
       text: "Approve",
     });
-    approve.addEventListener("click", () =>
-      decide(req.id, "approve", { whitelist_entry: entry.value.trim() }),
-    );
+    if (isSearch) {
+      // Approving a search request adds the fixed keyword to the teen's search allow list.
+      approve.addEventListener("click", () => decide(req.id, "approve", {}));
+    } else {
+      card.append(
+        el("label", {
+          class: "entry-label",
+          text: "Allow (edit to broaden — e.g. host/* or a topic like “BeyBlade anime”):",
+        }),
+      );
+      const entry = el("input", {
+        class: "entry",
+        "aria-label": "Whitelist entry",
+      });
+      entry.value = req.url;
+      card.append(entry);
+      approve.addEventListener("click", () =>
+        decide(req.id, "approve", { whitelist_entry: entry.value.trim() }),
+      );
+    }
 
     const reject = el("button", {
       class: "reject",
@@ -470,7 +522,10 @@
       req.profile
         ? el("span", { class: "badge profile", text: req.profile })
         : null,
-      el("span", { class: "url", text: req.whitelist_entry || req.url }),
+      el("span", {
+        class: "url",
+        text: req.keyword || req.whitelist_entry || req.url,
+      }),
       el("span", { class: "muted", text: timeAgo(req.decided_ts) }),
     );
   }
@@ -780,6 +835,14 @@
     $("bl-add-btn").addEventListener("click", () => addListEntry(BLOCK));
     $("bl-entry").addEventListener("keydown", (e) => {
       if (e.key === "Enter") addListEntry(BLOCK);
+    });
+    $("sk-add-btn").addEventListener("click", () => addListEntry(SK_ALLOW));
+    $("sk-entry").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") addListEntry(SK_ALLOW);
+    });
+    $("skb-add-btn").addEventListener("click", () => addListEntry(SK_BLOCK));
+    $("skb-entry").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") addListEntry(SK_BLOCK);
     });
     $("wl-profile").addEventListener("change", loadLists);
     $("cp-save").addEventListener("click", savePrompt);
