@@ -10,8 +10,8 @@ doc hook blocks creating .md files. Add that SKILL.md by hand (or relax the hook
 
 from __future__ import annotations
 
-RUBRIC = """\
-Decide whether a web page is appropriate for a 10-year-old. Be conservative but
+_RUBRIC_TEMPLATE = """\
+Decide whether a web page is appropriate for a {age}-year-old. Be conservative but
 FAIL-OPEN: block clear violations, but when genuinely unsure, ALLOW with confidence
 below 0.6 (over-blocking harms a child's learning and everyday browsing).
 
@@ -36,3 +36,13 @@ NEVER BLOCK:
 - Education, news (even hard topics), and general entertainment unless a block category
   clearly applies; search engines, encyclopedias, and children's sites.
 """
+
+
+def rubric(age: int) -> str:
+    """Render the policy for a specific child ``age``.
+
+    Uses ``str.replace`` (never ``str.format``): the only placeholder is ``{age}`` and the
+    rubric carries no other braces, but staying consistent with the classifier's instruction
+    template keeps the substitution safe if JSON-like examples are ever added here.
+    """
+    return _RUBRIC_TEMPLATE.replace("{age}", str(age))

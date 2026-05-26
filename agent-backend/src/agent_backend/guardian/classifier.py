@@ -14,14 +14,14 @@ from typing import Any
 
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query
 
-from .config import GuardianConfig
-from .rubric import RUBRIC
+from .config import DEFAULT_AGE, GuardianConfig
+from .rubric import rubric
 from .verdict import Verdict, allow, parse_verdict
 
 _DISALLOWED = ["Bash", "Edit", "Write", "Read", "NotebookEdit", "WebFetch", "WebSearch", "Task"]
 
 _INSTRUCTIONS = (
-    "You are a parental-control content classifier protecting a 10-year-old child. "
+    "You are a parental-control content classifier protecting a {age}-year-old child. "
     "Apply the POLICY below to the page. Respond with ONLY a JSON object "
     "(no prose, no code fences):\n"
     '{"verdict":"allow"|"block","reason":"<one child-friendly sentence>",'
@@ -30,6 +30,16 @@ _INSTRUCTIONS = (
     '{"verdict":"need_screenshot","reason":"...","confidence":<0..1>,"categories":[]}.\n'
     'When uncertain whether to block, prefer "allow" with confidence below 0.6.\n\nPOLICY:\n'
 )
+
+
+def _instructions(age: int) -> str:
+    """Render the instruction preamble for a specific child ``age``.
+
+    Uses ``str.replace`` (never ``str.format``) because the template embeds a literal JSON
+    example whose braces would otherwise break format-string parsing.
+    """
+    return _INSTRUCTIONS.replace("{age}", str(age))
+
 
 # Hard-block categories that a parent-approved topic must never override (safety floor).
 _ALWAYS_BLOCK = "adult_content, graphic_violence, self_harm, hate, or illegal_dangerous"
@@ -73,19 +83,22 @@ class Classifier:
     def __init__(self, config: GuardianConfig, *, query_fn: Any = query) -> None:
         self._config = config
         self._query = query_fn
-        self._rubric = RUBRIC
         self._lock = asyncio.Lock()
 
     def _options(
         self,
+        *,
+        age: int = DEFAULT_AGE,
+        policy: str = "",
         approved_topics: tuple[str, ...] = (),
         disallowed_topics: tuple[str, ...] = (),
     ) -> ClaudeAgentOptions:
         return ClaudeAgentOptions(
             model=self._config.model,
             system_prompt=(
-                _INSTRUCTIONS
-                + self._rubric
+                _instructions(age)
+                + rubric(age)
+                + policy
                 + _approved_block(approved_topics)
                 + _disallowed_block(disallowed_topics)
             ),
@@ -115,6 +128,8 @@ class Classifier:
         payload: dict[str, str],
         *,
         screenshot_b64: str | None = None,
+        age: int = DEFAULT_AGE,
+        policy: str = "",
         approved_topics: tuple[str, ...] = (),
         disallowed_topics: tuple[str, ...] = (),
     ) -> Verdict:
@@ -125,7 +140,13 @@ class Classifier:
         try:
             async with self._lock:
                 async for message in self._query(
-                    prompt=prompt, options=self._options(approved_topics, disallowed_topics)
+                    prompt=prompt,
+                    options=self._options(
+                        age=age,
+                        policy=policy,
+                        approved_topics=approved_topics,
+                        disallowed_topics=disallowed_topics,
+                    ),
                 ):
                     if isinstance(message, AssistantMessage):
                         for block in message.content:

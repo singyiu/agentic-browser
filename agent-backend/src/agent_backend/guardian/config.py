@@ -14,6 +14,7 @@ DEFAULT_METRICS_PORT = 2948
 DEFAULT_MODEL = "claude-haiku-4-5"  # fast + cheap for per-page classification
 DEFAULT_TIMEOUT_S = 180.0  # a classification spawns a `claude` subprocess; give it room
 DEFAULT_SCREENSHOT_THRESHOLD = 0.6
+DEFAULT_AGE = 10  # default child age for age-aware classification (per-profile override)
 DEFAULT_CACHE_PATH = "data/guardian_cache.db"
 DEFAULT_EVENT_LOG_PATH = "data/guardian_events.jsonl"
 DEFAULT_WHITELIST_PATH = "data/guardian_whitelist.json"

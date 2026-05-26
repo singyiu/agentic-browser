@@ -139,3 +139,64 @@ async def test_no_disallowed_topics_omits_block(tmp_path: Path) -> None:
     system_prompt = captured["system_prompt"]
     assert isinstance(system_prompt, str)
     assert "PARENT-BLOCKED" not in system_prompt
+
+
+# --- age parameterization + merged household policy ------------------------
+
+
+async def _system_prompt_for(tmp_path: Path, **classify_kwargs: object) -> str:
+    """Run one classify and return the system prompt the fake query saw."""
+    captured: dict[str, object] = {}
+
+    async def fake_query(*, prompt: str, options: object) -> AsyncIterator[object]:
+        captured["system_prompt"] = options.system_prompt  # type: ignore[attr-defined]
+        yield _result(structured={"verdict": "allow", "confidence": 0.9})
+
+    await Classifier(_config(tmp_path), query_fn=fake_query).classify(
+        {"url": "u"}, **classify_kwargs
+    )
+    system_prompt = captured["system_prompt"]
+    assert isinstance(system_prompt, str)
+    return system_prompt
+
+
+async def test_age_parameterizes_instructions_and_rubric(tmp_path: Path) -> None:
+    # A teen's configured age must reach BOTH the instructions and the rubric wording,
+    # replacing the built-in default of 10.
+    system_prompt = await _system_prompt_for(tmp_path, age=14)
+    assert "14-year-old" in system_prompt
+    assert "10-year-old" not in system_prompt
+
+
+async def test_default_age_is_ten(tmp_path: Path) -> None:
+    # No age supplied => the historical age-10 wording, unchanged.
+    assert "10-year-old" in await _system_prompt_for(tmp_path)
+
+
+async def test_age_substitution_preserves_json_braces(tmp_path: Path) -> None:
+    # The instructions embed a literal JSON example with braces; the age substitution
+    # must not corrupt it (i.e. it uses str.replace, never str.format).
+    system_prompt = await _system_prompt_for(tmp_path, age=8)
+    assert '{"verdict":"allow"|"block"' in system_prompt
+    assert "8-year-old" in system_prompt
+
+
+async def test_policy_rendered_after_rubric_before_approved(tmp_path: Path) -> None:
+    # The merged household policy sits between the rubric body and the parent-approved block.
+    system_prompt = await _system_prompt_for(
+        tmp_path,
+        policy="\n\nHOUSEHOLD GUIDANCE: no anonymous chat rooms.",
+        approved_topics=("BeyBlade anime",),
+    )
+    assert "HOUSEHOLD GUIDANCE: no anonymous chat rooms." in system_prompt
+    assert system_prompt.index("NEVER BLOCK") < system_prompt.index("HOUSEHOLD GUIDANCE")
+    assert system_prompt.index("HOUSEHOLD GUIDANCE") < system_prompt.index("PARENT-APPROVED")
+
+
+async def test_default_prompt_is_instructions_plus_rubric_only(tmp_path: Path) -> None:
+    # Regression guard: with no age/policy/topics, the prompt is byte-identical to the
+    # base instructions + rubric (no household, approved, or blocked sections appended).
+    from agent_backend.guardian.classifier import _instructions
+    from agent_backend.guardian.rubric import rubric
+
+    assert await _system_prompt_for(tmp_path) == _instructions(10) + rubric(10)
