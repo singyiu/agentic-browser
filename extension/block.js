@@ -2,8 +2,17 @@
 const params = new URLSearchParams(location.search);
 const reason = params.get("reason");
 const blockedUrl = params.get("url");
+// Search mode: a blocked search query rather than a blocked page (kind=search&query=...).
+const searchQuery = params.get("query") || "";
+const isSearch = params.get("kind") === "search" && !!searchQuery;
 if (reason) document.getElementById("reason").textContent = reason;
 if (blockedUrl) document.getElementById("url").textContent = blockedUrl;
+if (isSearch) {
+  // Show what was blocked (the query) instead of a page reason. textContent = XSS-safe.
+  const heading = document.querySelector("h1");
+  if (heading) heading.textContent = "This search isn't allowed";
+  document.getElementById("reason").textContent = searchQuery;
+}
 document.getElementById("back").addEventListener("click", () => history.back());
 
 // Inline guardian config loader. block.html is an extension page, so it may read the
@@ -36,34 +45,35 @@ function showCheckUi() {
   checkBtn.hidden = false;
 }
 
-async function statusFor(cfg, url) {
-  const resp = await fetch(
-    `${cfg.endpoint}/access-request?url=${encodeURIComponent(url)}`,
-    {
-      headers: { "X-Guardian-Token": cfg.token },
-    },
-  );
+async function statusFor(cfg) {
+  // In search mode, poll the keyword request by query; otherwise the URL access-request.
+  const path = isSearch
+    ? `/search-request?query=${encodeURIComponent(searchQuery)}`
+    : `/access-request?url=${encodeURIComponent(blockedUrl)}`;
+  const resp = await fetch(`${cfg.endpoint}${path}`, {
+    headers: { "X-Guardian-Token": cfg.token },
+  });
   if (!resp.ok) return null;
   return resp.json();
 }
 
 async function submitRequest() {
-  if (!blockedUrl) return;
+  if (isSearch ? !searchQuery : !blockedUrl) return;
   requestBtn.disabled = true;
   setStatus("Sending…");
   try {
     const cfg = await getConfig();
-    const resp = await fetch(`${cfg.endpoint}/access-request`, {
+    const path = isSearch ? "/search-request" : "/access-request";
+    const payload = isSearch
+      ? { query: searchQuery, url: blockedUrl, note: noteEl.value.trim() }
+      : { url: blockedUrl, reason: reason || "", note: noteEl.value.trim() };
+    const resp = await fetch(`${cfg.endpoint}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Guardian-Token": cfg.token,
       },
-      body: JSON.stringify({
-        url: blockedUrl,
-        reason: reason || "",
-        note: noteEl.value.trim(),
-      }),
+      body: JSON.stringify(payload),
     });
     if (resp.ok) {
       showCheckUi();
@@ -102,7 +112,7 @@ async function checkApproved() {
   setStatus("Checking…");
   try {
     const cfg = await getConfig();
-    const data = await statusFor(cfg, blockedUrl);
+    const data = await statusFor(cfg);
     if (data && data.status === "approved") {
       setStatus("Approved! Opening…");
       await openIfApproved();
@@ -131,7 +141,7 @@ async function restoreState() {
   if (!blockedUrl) return;
   try {
     const cfg = await getConfig();
-    const data = await statusFor(cfg, blockedUrl);
+    const data = await statusFor(cfg);
     if (!data) return;
     if (data.status === "approved") {
       showCheckUi();
