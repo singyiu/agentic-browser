@@ -103,9 +103,11 @@ class ProfileManager:
         # The Global profile applies to every teen. It is kept OUT of _runtimes so it can
         # never be reached by an X-Guardian-Token (no browser uses it); its allow/block
         # rules persist under <data_dir>/global/ and are re-opened on each startup.
-        gwl, gbl, greq, gcache, gprompt = default_profile_paths(GLOBAL_PROFILE_NAME, self._data_dir)
+        gwl, gbl, greq, gcache, gprompt, gska, gskb = default_profile_paths(
+            GLOBAL_PROFILE_NAME, self._data_dir
+        )
         self._global = build_runtime(
-            Profile(GLOBAL_PROFILE_NAME, "", gwl, gbl, greq, gcache, gprompt)
+            Profile(GLOBAL_PROFILE_NAME, "", gwl, gbl, greq, gcache, gprompt, gska, gskb)
         )
         # Cache of the merged Global+profile classification guidance, keyed by profile name.
         self._merged_cache = MergedPromptCache()
@@ -135,8 +137,8 @@ class ProfileManager:
         """Create a profile with a fresh token + isolated stores. Returns (runtime, token)."""
         cleaned = _validate_name(name)
         token = generate_token()
-        wl, bl, req, cache, prompt = default_profile_paths(cleaned, self._data_dir)
-        profile = Profile(cleaned, token, wl, bl, req, cache, prompt)
+        wl, bl, req, cache, prompt, ska, skb = default_profile_paths(cleaned, self._data_dir)
+        profile = Profile(cleaned, token, wl, bl, req, cache, prompt, ska, skb)
         with self._lock:
             if cleaned in self._profiles:
                 raise ProfileExistsError(cleaned)
@@ -245,12 +247,14 @@ class ProfileManager:
             old.requests_path,
             old.cache_path,
             old.prompt_path,
+            old.search_allow_path,
+            old.search_block_path,
         ) == managed:
             old_dir = Path(self._data_dir).expanduser() / old.name
             new_dir = Path(self._data_dir).expanduser() / new_name
             shutil.move(str(old_dir), str(new_dir))
-            wl, bl, req, cache, prompt = default_profile_paths(new_name, self._data_dir)
-            return Profile(new_name, old.token, wl, bl, req, cache, prompt, old.age)
+            wl, bl, req, cache, prompt, ska, skb = default_profile_paths(new_name, self._data_dir)
+            return Profile(new_name, old.token, wl, bl, req, cache, prompt, ska, skb, old.age)
         return replace(old, name=new_name)
 
     def _save(self) -> None:

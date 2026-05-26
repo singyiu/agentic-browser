@@ -44,6 +44,8 @@ class Profile:
     requests_path: str
     cache_path: str
     prompt_path: str
+    search_allow_path: str
+    search_block_path: str
     age: int = DEFAULT_AGE
 
 
@@ -59,8 +61,11 @@ class ProfileRegistry:
 
 def default_profile_paths(
     name: str, base: str = PROFILE_DATA_DIR
-) -> tuple[str, str, str, str, str]:
-    """Default (whitelist, blocklist, requests, cache, prompt) paths for ``name`` under ``base``."""
+) -> tuple[str, str, str, str, str, str, str]:
+    """Default per-profile store paths for ``name`` under ``base`` (7-tuple).
+
+    Order: whitelist, blocklist, requests, cache, prompt, search_allow, search_block.
+    """
     root = f"{base}/{name}"
     return (
         f"{root}/whitelist.json",
@@ -68,6 +73,8 @@ def default_profile_paths(
         f"{root}/requests.json",
         f"{root}/cache.db",
         f"{root}/prompt.txt",
+        f"{root}/search_allow.json",
+        f"{root}/search_block.json",
     )
 
 
@@ -80,6 +87,8 @@ def load_profiles(
     default_requests_path: str,
     default_cache_path: str,
     default_prompt_path: str,
+    default_search_allow_path: str,
+    default_search_block_path: str,
 ) -> ProfileRegistry:
     """Build the registry from the JSON file, or a single default profile.
 
@@ -109,6 +118,8 @@ def load_profiles(
                 requests_path=default_requests_path,
                 cache_path=default_cache_path,
                 prompt_path=default_prompt_path,
+                search_allow_path=default_search_allow_path,
+                search_block_path=default_search_block_path,
             ),
         )
     )
@@ -142,6 +153,8 @@ def _profile_to_dict(profile: Profile) -> dict[str, object]:
         "requests_path": profile.requests_path,
         "cache_path": profile.cache_path,
         "prompt_path": profile.prompt_path,
+        "search_allow_path": profile.search_allow_path,
+        "search_block_path": profile.search_block_path,
         "age": profile.age,
     }
 
@@ -184,7 +197,7 @@ def _build_profile(entry: object) -> Profile:
         raise ConfigError(f"Invalid profile name {name!r}: use only letters, digits, '-' or '_'.")
     if not token:
         raise ConfigError(f"Profile {name!r} has an empty token.")
-    wl, bl, req, cache, prompt = default_profile_paths(name)
+    wl, bl, req, cache, prompt, ska, skb = default_profile_paths(name)
     return Profile(
         name=name,
         token=token,
@@ -193,6 +206,8 @@ def _build_profile(entry: object) -> Profile:
         requests_path=str(entry.get("requests_path") or req),
         cache_path=str(entry.get("cache_path") or cache),
         prompt_path=str(entry.get("prompt_path") or prompt),
+        search_allow_path=str(entry.get("search_allow_path") or ska),
+        search_block_path=str(entry.get("search_block_path") or skb),
         age=_coerce_age(entry.get("age")),
     )
 

@@ -23,6 +23,8 @@ _DEFAULTS = {
     "default_requests_path": "r",
     "default_cache_path": "c",
     "default_prompt_path": "p",
+    "default_search_allow_path": "sa",
+    "default_search_block_path": "sb",
 }
 
 
@@ -172,6 +174,8 @@ def test_rename_custom_path_profile_skips_dir_move(tmp_path: Path) -> None:
         str(tmp_path / "legacy_req.json"),
         str(tmp_path / "legacy_cache.db"),
         str(tmp_path / "legacy_prompt.txt"),
+        str(tmp_path / "legacy_search_allow.json"),
+        str(tmp_path / "legacy_search_block.json"),
     )
     mgr = ProfileManager(
         {"default": legacy},
@@ -183,6 +187,33 @@ def test_rename_custom_path_profile_skips_dir_move(tmp_path: Path) -> None:
     snap = mgr.snapshot()
     assert "default" not in snap and "sam" in snap
     assert snap["sam"].whitelist.current().values == ()
+
+
+# --- search-keyword stores ---------------------------------------------------
+
+
+def test_create_runtime_has_search_keyword_stores(tmp_path: Path) -> None:
+    runtime, _ = _manager(tmp_path).create("alice")
+    assert runtime.search_allow.current().values == ()
+    assert runtime.search_block.current().values == ()
+
+
+def test_global_runtime_has_search_keyword_stores(tmp_path: Path) -> None:
+    gl = _manager(tmp_path).global_runtime()
+    assert gl.search_allow.current().values == ()
+    assert gl.search_block.current().values == ()
+
+
+def test_managed_rename_moves_search_keyword_lists(tmp_path: Path) -> None:
+    # A managed profile's rename must relocate its dir AND recompute the search paths,
+    # else _relocate's tuple-comparison silently leaves the search lists on stale paths.
+    mgr = _manager(tmp_path)
+    runtime, _ = mgr.create("alice")
+    runtime.search_block.add("gambling")
+    mgr.rename("alice", "alex")
+    moved = mgr.snapshot()["alex"]
+    assert moved.search_block.current().matches("online gambling") == "gambling"
+    assert (tmp_path / "profiles" / "alex" / "search_block.json").exists()
 
 
 # --- delete ------------------------------------------------------------------

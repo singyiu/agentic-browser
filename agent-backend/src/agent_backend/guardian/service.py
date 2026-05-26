@@ -23,6 +23,7 @@ from .cache import VerdictCache
 from .classifier import Classifier
 from .config import DEFAULT_AGE, MAX_AGE, MIN_AGE, GuardianConfig
 from .event_log import EventLog
+from .keyword_store import KeywordStore
 from .metrics import GuardianMetrics
 from .normalize import extract_host, normalize_url
 from .pin_store import PinStore, validate_pin_format
@@ -135,6 +136,8 @@ def _build_runtimes(
         request_store=request_store or RequestStore(config.requests_path),
         cache=cache or VerdictCache(config.cache_path),
         prompt_store=PromptStore(config.prompt_path),
+        search_allow=KeywordStore(config.search_allow_path),
+        search_block=KeywordStore(config.search_block_path),
         age=DEFAULT_AGE,
     )
     return {default.name: default}
@@ -241,9 +244,13 @@ def create_app(
             rt.whitelist.reload_if_changed,
             rt.blocklist.reload_if_changed,
             rt.prompt_store.reload_if_changed,
+            rt.search_allow.reload_if_changed,
+            rt.search_block.reload_if_changed,
             gl.whitelist.reload_if_changed,
             gl.blocklist.reload_if_changed,
             gl.prompt_store.reload_if_changed,
+            gl.search_allow.reload_if_changed,
+            gl.search_block.reload_if_changed,
         ):
             changed = await loop.run_in_executor(None, reloader) or changed
         if changed:

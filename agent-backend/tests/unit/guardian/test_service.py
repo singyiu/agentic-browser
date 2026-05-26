@@ -12,6 +12,7 @@ from agent_backend.guardian.access_requests import RequestStore
 from agent_backend.guardian.blocklist import BlocklistStore
 from agent_backend.guardian.cache import CacheEntry
 from agent_backend.guardian.config import GuardianConfig
+from agent_backend.guardian.keyword_store import KeywordStore
 from agent_backend.guardian.profile_manager import ProfileManager
 from agent_backend.guardian.profiles import load_profiles
 from agent_backend.guardian.prompt import PromptStore
@@ -962,6 +963,8 @@ def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
             request_store=RequestStore(str(tmp_path / "alice_req.json")),
             cache=FakeCache(),
             prompt_store=PromptStore(str(tmp_path / "alice_prompt.txt")),
+            search_allow=KeywordStore(str(tmp_path / "alice_sa.json")),
+            search_block=KeywordStore(str(tmp_path / "alice_sb.json")),
             age=12,
         ),
         "bob": ProfileRuntime(
@@ -972,6 +975,8 @@ def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
             request_store=RequestStore(str(tmp_path / "bob_req.json")),
             cache=FakeCache(),
             prompt_store=PromptStore(str(tmp_path / "bob_prompt.txt")),
+            search_allow=KeywordStore(str(tmp_path / "bob_sa.json")),
+            search_block=KeywordStore(str(tmp_path / "bob_sb.json")),
             age=10,
         ),
     }
@@ -1116,6 +1121,8 @@ def test_registry_path_builds_isolated_profiles(tmp_path: Path) -> None:
         default_requests_path=":memory:",
         default_cache_path=":memory:",
         default_prompt_path=":memory:",
+        default_search_allow_path=":memory:",
+        default_search_block_path=":memory:",
     )
     app = create_app(
         _config(),

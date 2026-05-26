@@ -24,6 +24,8 @@ _DEFAULTS = {
     "default_requests_path": "data/guardian_requests.json",
     "default_cache_path": "data/guardian_cache.db",
     "default_prompt_path": "data/guardian_prompt.txt",
+    "default_search_allow_path": "data/guardian_search_allow.json",
+    "default_search_block_path": "data/guardian_search_block.json",
 }
 
 
@@ -36,8 +38,28 @@ def _write(tmp_path: Path, data: object) -> str:
 def _registry() -> ProfileRegistry:
     return ProfileRegistry(
         (
-            Profile("alice", "tA", "a/wl.json", "a/bl.json", "a/req.json", "a/cache.db", "a/p.txt"),
-            Profile("bob", "tB", "b/wl.json", "b/bl.json", "b/req.json", "b/cache.db", "b/p.txt"),
+            Profile(
+                "alice",
+                "tA",
+                "a/wl.json",
+                "a/bl.json",
+                "a/req.json",
+                "a/cache.db",
+                "a/p.txt",
+                "a/sa.json",
+                "a/sb.json",
+            ),
+            Profile(
+                "bob",
+                "tB",
+                "b/wl.json",
+                "b/bl.json",
+                "b/req.json",
+                "b/cache.db",
+                "b/p.txt",
+                "b/sa.json",
+                "b/sb.json",
+            ),
         )
     )
 
@@ -173,6 +195,8 @@ def test_load_no_file_no_default_token_raises(tmp_path: Path) -> None:
             default_requests_path="r",
             default_cache_path="c",
             default_prompt_path="p",
+            default_search_allow_path="sa",
+            default_search_block_path="sb",
         )
 
 
@@ -187,6 +211,8 @@ def test_load_empty_list_no_default_token_raises(tmp_path: Path) -> None:
             default_requests_path="r",
             default_cache_path="c",
             default_prompt_path="p",
+            default_search_allow_path="sa",
+            default_search_block_path="sb",
         )
 
 
@@ -252,7 +278,19 @@ def test_save_profiles_atomic_keeps_original_on_replace_failure(
 ) -> None:
     path = str(tmp_path / "out.json")
     save_profiles(
-        (Profile("alice", "tA", "a/wl.json", "a/bl.json", "a/req.json", "a/cache.db", "a/p.txt"),),
+        (
+            Profile(
+                "alice",
+                "tA",
+                "a/wl.json",
+                "a/bl.json",
+                "a/req.json",
+                "a/cache.db",
+                "a/p.txt",
+                "a/sa.json",
+                "a/sb.json",
+            ),
+        ),
         path,
     )
     before = Path(path).read_text(encoding="utf-8")
@@ -265,7 +303,15 @@ def test_save_profiles_atomic_keeps_original_on_replace_failure(
         save_profiles(
             (
                 Profile(
-                    "bob", "tB", "b/wl.json", "b/bl.json", "b/req.json", "b/cache.db", "b/p.txt"
+                    "bob",
+                    "tB",
+                    "b/wl.json",
+                    "b/bl.json",
+                    "b/req.json",
+                    "b/cache.db",
+                    "b/p.txt",
+                    "b/sa.json",
+                    "b/sb.json",
                 ),
             ),
             path,
@@ -280,10 +326,42 @@ def test_save_profiles_atomic_keeps_original_on_replace_failure(
 # --- age + prompt_path (classification prompts) -----------------------------
 
 
-def test_default_profile_paths_returns_five_with_prompt() -> None:
+def test_default_profile_paths_returns_seven_with_search() -> None:
     paths = default_profile_paths("alice")
-    assert len(paths) == 5
+    assert len(paths) == 7
     assert paths[4].endswith("/alice/prompt.txt")
+    assert paths[5].endswith("/alice/search_allow.json")
+    assert paths[6].endswith("/alice/search_block.json")
+
+
+def test_search_paths_round_trip_save_load(tmp_path: Path) -> None:
+    reg = ProfileRegistry(
+        (
+            Profile(
+                "alice",
+                "tA",
+                "a/wl.json",
+                "a/bl.json",
+                "a/req.json",
+                "a/cache.db",
+                "a/p.txt",
+                "a/sa.json",
+                "a/sb.json",
+            ),
+        )
+    )
+    out = str(tmp_path / "p.json")
+    save_profiles(reg.all(), out)
+    loaded = _find(load_profiles(out, **_DEFAULTS), "alice")
+    assert loaded.search_allow_path == "a/sa.json"
+    assert loaded.search_block_path == "a/sb.json"
+
+
+def test_load_missing_search_paths_default_to_managed(tmp_path: Path) -> None:
+    path = _write(tmp_path, [{"name": "alice", "token": "tA"}])
+    alice = _find(load_profiles(path, **_DEFAULTS), "alice")
+    assert alice.search_allow_path.endswith("/alice/search_allow.json")
+    assert alice.search_block_path.endswith("/alice/search_block.json")
 
 
 def test_load_reads_age_from_entry(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ from ..config import ConfigError
 from .access_requests import RequestStore
 from .blocklist import BlocklistStore
 from .cache import VerdictCache
+from .keyword_store import KeywordStore
 from .profiles import Profile
 from .prompt import PromptStore
 from .whitelist import WhitelistStore
@@ -33,6 +34,8 @@ class ProfileRuntime:
     request_store: RequestStore
     cache: VerdictCache
     prompt_store: PromptStore
+    search_allow: KeywordStore
+    search_block: KeywordStore
     age: int
 
 
@@ -47,6 +50,8 @@ def build_runtime(profile: Profile) -> ProfileRuntime:
         profile.requests_path,
         profile.cache_path,
         profile.prompt_path,
+        profile.search_allow_path,
+        profile.search_block_path,
     ):
         try:
             Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
@@ -62,5 +67,7 @@ def build_runtime(profile: Profile) -> ProfileRuntime:
         request_store=RequestStore(profile.requests_path),
         cache=VerdictCache(profile.cache_path),
         prompt_store=PromptStore(profile.prompt_path),
+        search_allow=KeywordStore(profile.search_allow_path),
+        search_block=KeywordStore(profile.search_block_path),
         age=profile.age,
     )

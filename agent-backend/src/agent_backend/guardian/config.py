@@ -23,6 +23,8 @@ DEFAULT_WHITELIST_PATH = "data/guardian_whitelist.json"
 DEFAULT_BLOCKLIST_PATH = "data/guardian_blocklist.json"
 DEFAULT_REQUESTS_PATH = "data/guardian_requests.json"
 DEFAULT_PROMPT_PATH = "data/guardian_prompt.txt"
+DEFAULT_SEARCH_ALLOW_PATH = "data/guardian_search_allow.json"
+DEFAULT_SEARCH_BLOCK_PATH = "data/guardian_search_block.json"
 DEFAULT_PROFILES_PATH = "data/guardian_profiles.json"
 DEFAULT_ADMIN_PATH = "data/guardian_admin.json"
 
@@ -55,6 +57,9 @@ class GuardianConfig:
     admin_path: str = DEFAULT_ADMIN_PATH
     # Legacy single-profile classification prompt; per-profile prompts live under data/profiles/.
     prompt_path: str = DEFAULT_PROMPT_PATH
+    # Legacy single-profile search-keyword lists; per-profile lists live under data/profiles/.
+    search_allow_path: str = DEFAULT_SEARCH_ALLOW_PATH
+    search_block_path: str = DEFAULT_SEARCH_BLOCK_PATH
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> GuardianConfig:
@@ -88,6 +93,12 @@ class GuardianConfig:
             blocklist_path=_clean(e.get("GUARDIAN_BLOCKLIST_PATH")) or DEFAULT_BLOCKLIST_PATH,
             requests_path=_clean(e.get("GUARDIAN_REQUESTS_PATH")) or DEFAULT_REQUESTS_PATH,
             prompt_path=_clean(e.get("GUARDIAN_PROMPT_PATH")) or DEFAULT_PROMPT_PATH,
+            search_allow_path=(
+                _clean(e.get("GUARDIAN_SEARCH_ALLOW_PATH")) or DEFAULT_SEARCH_ALLOW_PATH
+            ),
+            search_block_path=(
+                _clean(e.get("GUARDIAN_SEARCH_BLOCK_PATH")) or DEFAULT_SEARCH_BLOCK_PATH
+            ),
             profiles_path=_clean(e.get("GUARDIAN_PROFILES_PATH")) or DEFAULT_PROFILES_PATH,
             admin_path=_clean(e.get("GUARDIAN_ADMIN_PATH")) or DEFAULT_ADMIN_PATH,
             parent_pin=_clean(e.get("GUARDIAN_PARENT_PIN")),
