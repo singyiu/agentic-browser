@@ -572,7 +572,7 @@ def create_app(
 
         if request.method == "GET":
             query = request.query_params.get("query", "").strip()
-            if not query:
+            if not query or len(query) > _MAX_QUERY_CHARS:
                 return JSONResponse({"error": "query param required"}, status_code=422)
             match = rt.request_store.current().latest_for_keyword(query)
             if match is None:

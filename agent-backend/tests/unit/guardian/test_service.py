@@ -1737,6 +1737,12 @@ def test_search_request_status_check(tmp_path: Path) -> None:
     assert resp.json()["status"] == "pending"
 
 
+def test_search_request_get_rejects_overlong_query(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path), classifier=FakeClassifier(Verdict("allow")))
+    resp = client.get("/search-request?query=" + "x" * 501, headers=_ALICE)
+    assert resp.status_code == 422
+
+
 def test_approve_search_request_adds_to_search_allow(tmp_path: Path) -> None:
     runtimes = _two_profiles(tmp_path)
     client = _multi_client(runtimes, classifier=FakeClassifier(Verdict("allow")))

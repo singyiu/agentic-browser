@@ -236,7 +236,12 @@ const BLOCK_PAGE_URL = chrome.runtime.getURL("block.html");
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "CLASSIFY_SEARCH") {
     // Proxy a content-script search check through the SW: a content script on a web origin
-    // can't call the backend directly (CORS), but the SW holds host permissions.
+    // can't call the backend directly (CORS), but the SW holds host permissions. Only honor it
+    // from our own extension contexts (defense-in-depth, mirroring CLEAR_HOTCACHE).
+    if (sender.id !== chrome.runtime.id) {
+      sendResponse({ verdict: "allow", reason: "unauthorized" });
+      return false;
+    }
     classifySearchQuery(String(message.query || "")).then(sendResponse);
     return true; // async response
   }
