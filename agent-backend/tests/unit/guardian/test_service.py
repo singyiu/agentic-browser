@@ -1697,3 +1697,66 @@ def test_search_classify_caches_verdict_under_lowercased_key(tmp_path: Path) -> 
     client = _multi_client(runtimes, classifier=fake)
     client.post("/search-classify", json={"query": "Bad Thing"}, headers=_ALICE)
     assert cache.puts and cache.puts[0][0] == "search:bad thing"
+
+
+# --- POST /search-request + keyword approval --------------------------------
+
+
+def test_search_request_requires_token(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path), classifier=FakeClassifier(Verdict("allow")))
+    resp = client.post("/search-request", json={"query": "x", "url": "https://g/"})
+    assert resp.status_code == 403
+
+
+def test_search_request_rejects_missing_query(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path), classifier=FakeClassifier(Verdict("allow")))
+    resp = client.post("/search-request", json={"url": "https://g/s"}, headers=_ALICE)
+    assert resp.status_code == 422
+
+
+def test_search_request_creates_pending(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes, classifier=FakeClassifier(Verdict("allow")))
+    resp = client.post(
+        "/search-request",
+        json={"query": "dragons", "url": "https://www.google.com/search?q=dragons"},
+        headers=_ALICE,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending"
+    pending = runtimes["alice"].request_store.current().pending()
+    assert len(pending) == 1
+    assert pending[0].kind == "search" and pending[0].keyword == "dragons"
+
+
+def test_search_request_status_check(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes, classifier=FakeClassifier(Verdict("allow")))
+    client.post("/search-request", json={"query": "dragons", "url": "https://g/s"}, headers=_ALICE)
+    resp = client.get("/search-request?query=dragons", headers=_ALICE)
+    assert resp.json()["status"] == "pending"
+
+
+def test_approve_search_request_adds_to_search_allow(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes, classifier=FakeClassifier(Verdict("allow")))
+    post = client.post(
+        "/search-request", json={"query": "anime swords", "url": "https://g/s"}, headers=_ALICE
+    )
+    resp = client.post(
+        "/review/decision", json={"id": post.json()["id"], "decision": "approve"}, headers=_PIN
+    )
+    assert resp.status_code == 200
+    assert runtimes["alice"].search_allow.current().matches("cool anime swords") == "anime swords"
+
+
+def test_reject_search_request_leaves_search_allow_empty(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes, classifier=FakeClassifier(Verdict("allow")))
+    post = client.post(
+        "/search-request", json={"query": "fireworks", "url": "https://g/s"}, headers=_ALICE
+    )
+    client.post(
+        "/review/decision", json={"id": post.json()["id"], "decision": "reject"}, headers=_PIN
+    )
+    assert runtimes["alice"].search_allow.current().values == ()

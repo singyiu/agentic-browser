@@ -563,6 +563,57 @@ def create_app(
         metrics.record_access_request(host)
         return JSONResponse({"id": req.id, "status": req.status})
 
+    async def search_request_endpoint(request: Request) -> JSONResponse:
+        # Teen-facing: ask a parent to allow a blocked search keyword (token-authed, low-privilege).
+        rt = _resolve_runtime(request)
+        if rt is None:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        loop = asyncio.get_running_loop()
+
+        if request.method == "GET":
+            query = request.query_params.get("query", "").strip()
+            if not query:
+                return JSONResponse({"error": "query param required"}, status_code=422)
+            match = rt.request_store.current().latest_for_keyword(query)
+            if match is None:
+                return JSONResponse({"status": "none"})
+            return JSONResponse(
+                {"status": match.status, "id": match.id, "decision_note": match.decision_note}
+            )
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        query = str(body.get("query", "")).strip()
+        page_url = str(body.get("url", "")).strip()
+        note = str(body.get("note", "")).strip()
+        if not query or len(query) > _MAX_QUERY_CHARS:
+            return JSONResponse(
+                {"error": f"query required (1-{_MAX_QUERY_CHARS} chars)"}, status_code=422
+            )
+        if not page_url or len(page_url) > 2048 or not page_url.startswith(("http://", "https://")):
+            return JSONResponse({"error": "url must be an http(s) URL"}, status_code=422)
+        if len(note) > 500:
+            return JSONResponse({"error": "note must be at most 500 chars"}, status_code=422)
+        url_key = normalize_url(page_url)
+        req = await loop.run_in_executor(
+            None,
+            functools.partial(
+                rt.request_store.add_request,
+                url=page_url,
+                url_key=url_key,
+                host=extract_host(url_key),
+                reason=f"Blocked search: {query[:200]}",
+                note=note,
+                kind="search",
+                keyword=query,
+            ),
+        )
+        # Log only the keyword length; the parent reviews the keyword itself in the stored request.
+        event_log.log("search_request", query_len=len(query), id=req.id, profile=rt.name)
+        return JSONResponse({"id": req.id, "status": req.status})
+
     async def home_page(_request: Request) -> Response:
         # The parent app shell. On first run there is no PIN and nothing to show, so route to
         # the setup wizard. The redirect is server-side so it holds even with JS disabled.
@@ -651,6 +702,37 @@ def create_app(
                 break
         if owner is None or existing is None:
             return JSONResponse({"error": "request not found"}, status_code=404)
+
+        # A search-keyword request approves the keyword onto the teen's search ALLOW list (not the
+        # URL whitelist); the keyword is fixed at request time, so no parent-supplied entry.
+        if existing.kind == "search":
+            try:
+                decided = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        owner.request_store.decide,
+                        request_id,
+                        decision=decision,
+                        whitelist_entry=existing.keyword if decision == "approve" else None,
+                        decision_note=note,
+                    ),
+                )
+            except KeyError:
+                return JSONResponse({"error": "request not found"}, status_code=404)
+            except ValueError:
+                return JSONResponse({"error": "request already decided"}, status_code=422)
+            if decision == "approve" and existing.keyword:
+                try:
+                    await loop.run_in_executor(None, owner.search_allow.add, existing.keyword)
+                    await loop.run_in_executor(None, owner.cache.clear)
+                except OSError:
+                    return JSONResponse({"error": "keyword write failed"}, status_code=500)
+                event_log.log("search_request_approved", id=request_id, profile=owner.name)
+                metrics.record_access_decision("approve")
+            else:
+                event_log.log("search_request_rejected", id=request_id, profile=owner.name)
+                metrics.record_access_decision("reject")
+            return JSONResponse({"id": decided.id, "status": decided.status})
 
         # The whitelist entry is the parent's choice; default to the request's RAW url (an exact
         # match) — never the url_key, which collapses YouTube videos to a non-matching topic.
@@ -980,6 +1062,7 @@ def create_app(
             Route("/dwell", dwell, methods=["POST"]),
             Route("/whitelist", whitelist_endpoint, methods=["GET", "POST", "DELETE"]),
             Route("/access-request", access_request_endpoint, methods=["GET", "POST"]),
+            Route("/search-request", search_request_endpoint, methods=["GET", "POST"]),
             Route("/setup", setup_page, methods=["GET"]),
             Route("/setup/status", setup_status, methods=["GET"]),
             Route("/setup/pin", setup_pin, methods=["POST"]),

@@ -32,6 +32,8 @@ class AccessRequest:
     decided_ts: str | None
     decision_note: str | None
     whitelist_entry: str | None
+    kind: str = "url"  # "url" (unblock a page) | "search" (allow a search keyword)
+    keyword: str | None = None  # the search term, when kind == "search"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +58,13 @@ class RequestSnapshot:
     def latest_for_url_key(self, url_key: str) -> AccessRequest | None:
         """The most recent request matching ``url_key`` (submission order = chronological)."""
         return next((r for r in reversed(self.requests) if r.url_key == url_key), None)
+
+    def latest_for_keyword(self, keyword: str) -> AccessRequest | None:
+        """The most recent search-keyword request matching ``keyword``."""
+        return next(
+            (r for r in reversed(self.requests) if r.kind == "search" and r.keyword == keyword),
+            None,
+        )
 
 
 def _opt_str(value: object) -> str | None:
@@ -82,6 +91,8 @@ def _parse(item: object) -> AccessRequest | None:
         decided_ts=_opt_str(item.get("decided_ts")),
         decision_note=_opt_str(item.get("decision_note")),
         whitelist_entry=_opt_str(item.get("whitelist_entry")),
+        kind=str(item.get("kind", "url")),
+        keyword=_opt_str(item.get("keyword")),
     )
 
 
@@ -112,13 +123,32 @@ class RequestStore:
         return self._current
 
     def add_request(
-        self, *, url: str, url_key: str, host: str, reason: str, note: str
+        self,
+        *,
+        url: str,
+        url_key: str,
+        host: str,
+        reason: str,
+        note: str,
+        kind: str = "url",
+        keyword: str | None = None,
     ) -> AccessRequest:
-        """Queue a new pending request, or return the existing pending one for this url_key."""
+        """Queue a new pending request, or return the existing pending duplicate.
+
+        URL requests dedupe on ``url_key``; search-keyword requests dedupe on ``keyword`` (the
+        same query blocked on different pages is a single ask).
+        """
         with self._lock:
             requests = list(self._read())
             for existing in requests:
-                if existing.url_key == url_key and existing.status == "pending":
+                if existing.status != "pending":
+                    continue
+                duplicate = (
+                    existing.kind == "search" and existing.keyword == keyword
+                    if kind == "search"
+                    else existing.kind == "url" and existing.url_key == url_key
+                )
+                if duplicate:
                     self._current = RequestSnapshot(tuple(requests))
                     return existing
             request = AccessRequest(
@@ -133,6 +163,8 @@ class RequestStore:
                 decided_ts=None,
                 decision_note=None,
                 whitelist_entry=None,
+                kind=kind,
+                keyword=keyword,
             )
             requests.append(request)
             self._write(requests)

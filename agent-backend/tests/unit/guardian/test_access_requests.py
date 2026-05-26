@@ -250,3 +250,91 @@ def test_accessrequest_and_snapshot_are_constructible() -> None:
     )
     snap = RequestSnapshot((req,))
     assert snap.by_id("req_1") is req
+
+
+# --- search-keyword requests (kind="search") ---
+
+
+def test_add_search_request_persists_kind_and_keyword(tmp_path: Path) -> None:
+    p = tmp_path / "req.json"
+    store = RequestStore(str(p), now=_ticking_clock())
+    req = store.add_request(
+        url="https://www.google.com/search?q=x",
+        url_key="google.com/search",
+        host="google.com",
+        reason="blocked search",
+        note="",
+        kind="search",
+        keyword="bad words",
+    )
+    assert req.kind == "search"
+    assert req.keyword == "bad words"
+    saved = json.loads(p.read_text())
+    assert saved[0]["kind"] == "search" and saved[0]["keyword"] == "bad words"
+
+
+def test_search_requests_dedupe_by_keyword_not_url(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    a = store.add_request(
+        url="https://google.com/search?q=x",
+        url_key="google.com/search",
+        host="google.com",
+        reason="r",
+        note="",
+        kind="search",
+        keyword="bad",
+    )
+    # Same keyword, different page URL -> one pending ask.
+    b = store.add_request(
+        url="https://bing.com/search?q=x",
+        url_key="bing.com/search",
+        host="bing.com",
+        reason="r",
+        note="",
+        kind="search",
+        keyword="bad",
+    )
+    assert a.id == b.id
+    assert len(store.current().pending()) == 1
+
+
+def test_search_and_url_requests_do_not_cross_dedupe(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.add_request(url="https://x.test/", url_key="k", host="x.test", reason="r", note="")
+    store.add_request(
+        url="https://x.test/",
+        url_key="k",
+        host="x.test",
+        reason="r",
+        note="",
+        kind="search",
+        keyword="k",
+    )
+    assert len(store.current().pending()) == 2
+
+
+def test_latest_for_keyword_finds_search_request(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.add_request(
+        url="https://g/",
+        url_key="g",
+        host="g",
+        reason="r",
+        note="",
+        kind="search",
+        keyword="dragons",
+    )
+    found = store.current().latest_for_keyword("dragons")
+    assert found is not None and found.keyword == "dragons"
+    assert store.current().latest_for_keyword("unicorns") is None
+
+
+def test_legacy_record_without_kind_defaults_to_url(tmp_path: Path) -> None:
+    # A request file written before this feature has no kind/keyword keys.
+    p = tmp_path / "req.json"
+    p.write_text(
+        json.dumps([{"id": "req_old", "url": "https://x/", "url_key": "x", "status": "pending"}])
+    )
+    rec = RequestStore(str(p)).current().by_id("req_old")
+    assert rec is not None
+    assert rec.kind == "url" and rec.keyword is None
