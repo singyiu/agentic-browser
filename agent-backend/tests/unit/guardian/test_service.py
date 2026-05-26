@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from starlette.testclient import TestClient
@@ -49,9 +50,12 @@ def _config(parent_pin: str = "testpin", admin_path: str = ":memory:") -> Guardi
 
 
 class FakeClassifier:
-    def __init__(self, result: object) -> None:
+    def __init__(self, result: object, *, search_result: object = None) -> None:
         self._result = result
+        # Defaults to the page result so existing callers need no change; search tests pass it.
+        self._search_result = search_result if search_result is not None else result
         self.calls = 0
+        self.search_calls = 0
 
     async def classify(
         self,
@@ -71,6 +75,15 @@ class FakeClassifier:
         if isinstance(self._result, Exception):
             raise self._result
         return self._result
+
+    async def classify_search_query(self, query: str, *, age: int = 10, policy: str = ""):
+        self.search_calls += 1
+        self.search_query = query
+        self.search_age = age
+        self.search_policy = policy
+        if isinstance(self._search_result, Exception):
+            raise self._search_result
+        return self._search_result
 
 
 class FakeCache:
@@ -1609,3 +1622,78 @@ def test_classify_uses_updated_prompt_after_edit(tmp_path: Path) -> None:
     )
     client.post("/classify", json={"url": "http://x"}, headers=_ALICE)
     assert "SENTINEL_RULE" in fake.policy
+
+
+# --- POST /search-classify ---------------------------------------------------
+
+
+def test_search_classify_requires_token(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path), classifier=FakeClassifier(Verdict("allow")))
+    assert client.post("/search-classify", json={"query": "x"}).status_code == 403
+
+
+def test_search_classify_rejects_empty_query(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path), classifier=FakeClassifier(Verdict("allow")))
+    assert client.post("/search-classify", json={"query": "  "}, headers=_ALICE).status_code == 422
+
+
+def test_search_classify_rejects_overlong_query(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path), classifier=FakeClassifier(Verdict("allow")))
+    resp = client.post("/search-classify", json={"query": "x" * 501}, headers=_ALICE)
+    assert resp.status_code == 422
+
+
+def test_search_classify_ai_allow(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("block"), search_result=Verdict("allow", "fine"))
+    client = _multi_client(_two_profiles(tmp_path), classifier=fake)
+    resp = client.post("/search-classify", json={"query": "how do plants grow"}, headers=_ALICE)
+    assert resp.status_code == 200
+    assert resp.json()["verdict"] == "allow"
+    assert fake.search_calls == 1
+
+
+def test_search_classify_ai_block(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("allow"), search_result=Verdict("block", "unsafe"))
+    client = _multi_client(_two_profiles(tmp_path), classifier=fake)
+    resp = client.post("/search-classify", json={"query": "something bad"}, headers=_ALICE)
+    assert resp.json()["verdict"] == "block"
+
+
+def test_search_classify_blocklist_skips_ai(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    runtimes["alice"].search_block.add("gambling")
+    fake = FakeClassifier(Verdict("allow"), search_result=Verdict("allow", "fine"))
+    client = _multi_client(runtimes, classifier=fake)
+    resp = client.post("/search-classify", json={"query": "online gambling tips"}, headers=_ALICE)
+    assert resp.json()["verdict"] == "block"
+    assert fake.search_calls == 0  # parent blocklist short-circuits the AI
+
+
+def test_search_classify_fails_open_on_classifier_error(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("allow"), search_result=RuntimeError("boom"))
+    client = _multi_client(_two_profiles(tmp_path), classifier=fake)
+    resp = client.post("/search-classify", json={"query": "neutral query"}, headers=_ALICE)
+    assert resp.status_code == 200
+    assert resp.json()["verdict"] == "allow"
+    assert resp.json()["reason"] == "classification_unavailable"
+
+
+def test_search_classify_returns_cached(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    cache = FakeCache(entry=CacheEntry("search:cached query", "block", "from cache", 1.0, 0.0))
+    runtimes["alice"] = replace(runtimes["alice"], cache=cache)
+    fake = FakeClassifier(Verdict("allow"), search_result=Verdict("allow"))
+    client = _multi_client(runtimes, classifier=fake)
+    resp = client.post("/search-classify", json={"query": "cached query"}, headers=_ALICE)
+    assert resp.json() == {"verdict": "block", "reason": "from cache", "cached": True}
+    assert fake.search_calls == 0
+
+
+def test_search_classify_caches_verdict_under_lowercased_key(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    cache = FakeCache()
+    runtimes["alice"] = replace(runtimes["alice"], cache=cache)
+    fake = FakeClassifier(Verdict("allow"), search_result=Verdict("block", "unsafe"))
+    client = _multi_client(runtimes, classifier=fake)
+    client.post("/search-classify", json={"query": "Bad Thing"}, headers=_ALICE)
+    assert cache.puts and cache.puts[0][0] == "search:bad thing"

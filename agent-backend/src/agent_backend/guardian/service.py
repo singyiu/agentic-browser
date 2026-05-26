@@ -36,6 +36,7 @@ from .profile_manager import (
 from .profiles import DEFAULT_PROFILE_NAME, GLOBAL_PROFILE_NAME, ProfileRegistry
 from .prompt import PromptStore, default_profile_prompt
 from .runtime import ProfileRuntime, build_runtime
+from .search_classifier import classify_search_query
 from .verdict import Verdict
 from .whitelist import WhitelistStore, classify_entry
 
@@ -64,6 +65,7 @@ def _parse_activity_limit(raw: str | None) -> int:
 
 
 _MAX_PROMPT_CHARS = 4000
+_MAX_QUERY_CHARS = 500  # max length of a search query checked by /search-classify
 
 
 def _valid_prompt_text(text: str) -> bool:
@@ -372,6 +374,77 @@ def create_app(
                 duration,
             )
         )
+
+    async def search_classify(request: Request) -> JSONResponse:
+        """Classify a bare search query (token-authed): parent keyword lists, then age-aware AI.
+
+        Mirrors classify(): parent lists are checked synchronously, the AI verdict is cached
+        under a ``search:`` key, and any error/timeout fails open (allow) so a backend hiccup
+        never blocks all searching.
+        """
+        rt = _resolve_runtime(request)
+        if rt is None:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        query = str(body.get("query", "")).strip()
+        if not query or len(query) > _MAX_QUERY_CHARS:
+            return JSONResponse(
+                {"error": f"query required (1-{_MAX_QUERY_CHARS} chars)"}, status_code=422
+            )
+        loop = asyncio.get_running_loop()
+
+        # Hot-reload this teen's + Global's search lists and prompt; any change clears the teen's
+        # cached verdicts (search verdicts share the cache under a "search:" key prefix).
+        gl = _pm.global_runtime()
+        changed = False
+        for reloader in (
+            rt.search_allow.reload_if_changed,
+            rt.search_block.reload_if_changed,
+            rt.prompt_store.reload_if_changed,
+            gl.search_allow.reload_if_changed,
+            gl.search_block.reload_if_changed,
+            gl.prompt_store.reload_if_changed,
+        ):
+            changed = await loop.run_in_executor(None, reloader) or changed
+        if changed:
+            await loop.run_in_executor(None, rt.cache.clear)
+
+        cache_key = "search:" + query.lower()[:_MAX_QUERY_CHARS]
+        cached = await loop.run_in_executor(None, rt.cache.get, cache_key)
+        if cached is not None:
+            return JSONResponse(
+                {"verdict": cached.verdict, "reason": cached.reason, "cached": True}
+            )
+
+        try:
+            verdict = await asyncio.wait_for(
+                classify_search_query(
+                    query,
+                    teen_allow=rt.search_allow.current(),
+                    global_allow=gl.search_allow.current(),
+                    teen_block=rt.search_block.current(),
+                    global_block=gl.search_block.current(),
+                    classifier=classifier,
+                    age=rt.age,
+                    policy=_pm.merged_policy(rt),
+                ),
+                timeout=config.classify_timeout_s,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail-open on timeout or any error
+            event_log.log("search_fail_open", reason=type(exc).__name__, profile=rt.name)
+            return JSONResponse({"verdict": "allow", "reason": "classification_unavailable"})
+
+        await loop.run_in_executor(
+            None, rt.cache.put, cache_key, verdict.verdict, verdict.reason, verdict.confidence
+        )
+        # Never log the raw query (it may be sensitive); record only its length + verdict.
+        event_log.log(
+            "search_classify", query_len=len(query), verdict=verdict.verdict, profile=rt.name
+        )
+        return JSONResponse({"verdict": verdict.verdict, "reason": verdict.reason, "cached": False})
 
     async def dwell(request: Request) -> JSONResponse:
         rt = _resolve_runtime(request)
@@ -903,6 +976,7 @@ def create_app(
             Route("/", home_page, methods=["GET"]),
             Route("/health", health),
             Route("/classify", classify, methods=["POST"]),
+            Route("/search-classify", search_classify, methods=["POST"]),
             Route("/dwell", dwell, methods=["POST"]),
             Route("/whitelist", whitelist_endpoint, methods=["GET", "POST", "DELETE"]),
             Route("/access-request", access_request_endpoint, methods=["GET", "POST"]),
