@@ -15,6 +15,7 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 
+from .config import MAX_AGE, MIN_AGE
 from .profiles import (
     GLOBAL_PROFILE_NAME,
     PROFILE_DATA_DIR,
@@ -23,6 +24,7 @@ from .profiles import (
     default_profile_paths,
     save_profiles,
 )
+from .prompt import MergedPromptCache, default_profile_prompt, merge
 from .runtime import ProfileRuntime, build_runtime
 
 _TOKEN_BYTES = 32  # secrets.token_hex(32) -> 64 hex characters
@@ -43,6 +45,10 @@ class ProfileNotFoundError(ProfileError):
 
 class InvalidProfileNameError(ProfileError):
     """The name is not a safe filesystem slug."""
+
+
+class InvalidProfileAgeError(ProfileError):
+    """The age is outside the accepted range."""
 
 
 def generate_token() -> str:
@@ -97,8 +103,12 @@ class ProfileManager:
         # The Global profile applies to every teen. It is kept OUT of _runtimes so it can
         # never be reached by an X-Guardian-Token (no browser uses it); its allow/block
         # rules persist under <data_dir>/global/ and are re-opened on each startup.
-        gwl, gbl, greq, gcache = default_profile_paths(GLOBAL_PROFILE_NAME, self._data_dir)
-        self._global = build_runtime(Profile(GLOBAL_PROFILE_NAME, "", gwl, gbl, greq, gcache))
+        gwl, gbl, greq, gcache, gprompt = default_profile_paths(GLOBAL_PROFILE_NAME, self._data_dir)
+        self._global = build_runtime(
+            Profile(GLOBAL_PROFILE_NAME, "", gwl, gbl, greq, gcache, gprompt)
+        )
+        # Cache of the merged Global+profile classification guidance, keyed by profile name.
+        self._merged_cache = MergedPromptCache()
 
     # --- reads ---------------------------------------------------------------
 
@@ -125,8 +135,8 @@ class ProfileManager:
         """Create a profile with a fresh token + isolated stores. Returns (runtime, token)."""
         cleaned = _validate_name(name)
         token = generate_token()
-        wl, bl, req, cache = default_profile_paths(cleaned, self._data_dir)
-        profile = Profile(cleaned, token, wl, bl, req, cache)
+        wl, bl, req, cache, prompt = default_profile_paths(cleaned, self._data_dir)
+        profile = Profile(cleaned, token, wl, bl, req, cache, prompt)
         with self._lock:
             if cleaned in self._profiles:
                 raise ProfileExistsError(cleaned)
@@ -178,6 +188,47 @@ class ProfileManager:
             self._save()
         return token
 
+    def set_age(self, name: str, age: int) -> ProfileRuntime:
+        """Update a teen's age (persisted) and return the new runtime.
+
+        Rejects the Global profile (it has no age) and out-of-range ages. Drops the profile's
+        merged-prompt cache entry so the new age takes effect immediately; the verdict cache is
+        cleared by the caller (the parent endpoint), matching how list edits invalidate it.
+        """
+        if name == GLOBAL_PROFILE_NAME:
+            raise InvalidProfileNameError("The Global profile has no age.")
+        if not MIN_AGE <= age <= MAX_AGE:
+            raise InvalidProfileAgeError(f"Age must be between {MIN_AGE} and {MAX_AGE}.")
+        with self._lock:
+            if name not in self._profiles:
+                raise ProfileNotFoundError(name)
+            self._profiles[name] = replace(self._profiles[name], age=age)
+            runtime = replace(self._runtimes[name], age=age)
+            self._runtimes[name] = runtime
+            self._save()
+            self._merged_cache.invalidate(name)
+        return runtime
+
+    def merged_policy(self, rt: ProfileRuntime) -> str:
+        """Cached merged Global+profile classification guidance for the teen runtime ``rt``.
+
+        Falls back to the age-band default when the teen has not saved a prompt, so a fresh
+        profile already classifies with age-appropriate guidance applied. The cache self-heals
+        on prompt-file or age changes (it is keyed on both prompt mtimes plus the age).
+        """
+        shared = self._global
+        return self._merged_cache.get(
+            rt.name,
+            global_mtime=shared.prompt_store.mtime,
+            profile_mtime=rt.prompt_store.mtime,
+            age=rt.age,
+            build=lambda: merge(
+                age=rt.age,
+                global_text=shared.prompt_store.current(),
+                profile_text=rt.prompt_store.current() or default_profile_prompt(rt.age),
+            ),
+        )
+
     # --- internals -----------------------------------------------------------
 
     def _relocate(self, old: Profile, new_name: str) -> Profile:
@@ -188,12 +239,18 @@ class ProfileManager:
         ``default``) keeps its paths -- there is no per-profile directory to move.
         """
         managed = default_profile_paths(old.name, self._data_dir)
-        if (old.whitelist_path, old.blocklist_path, old.requests_path, old.cache_path) == managed:
+        if (
+            old.whitelist_path,
+            old.blocklist_path,
+            old.requests_path,
+            old.cache_path,
+            old.prompt_path,
+        ) == managed:
             old_dir = Path(self._data_dir).expanduser() / old.name
             new_dir = Path(self._data_dir).expanduser() / new_name
             shutil.move(str(old_dir), str(new_dir))
-            wl, bl, req, cache = default_profile_paths(new_name, self._data_dir)
-            return Profile(new_name, old.token, wl, bl, req, cache)
+            wl, bl, req, cache, prompt = default_profile_paths(new_name, self._data_dir)
+            return Profile(new_name, old.token, wl, bl, req, cache, prompt, old.age)
         return replace(old, name=new_name)
 
     def _save(self) -> None:

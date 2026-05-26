@@ -21,7 +21,7 @@ from .access_requests import RequestStore
 from .blocklist import BlocklistStore
 from .cache import VerdictCache
 from .classifier import Classifier
-from .config import GuardianConfig
+from .config import DEFAULT_AGE, GuardianConfig
 from .event_log import EventLog
 from .metrics import GuardianMetrics
 from .normalize import extract_host, normalize_url
@@ -33,6 +33,7 @@ from .profile_manager import (
     ProfileNotFoundError,
 )
 from .profiles import DEFAULT_PROFILE_NAME, GLOBAL_PROFILE_NAME, ProfileRegistry
+from .prompt import PromptStore
 from .runtime import ProfileRuntime, build_runtime
 from .verdict import Verdict
 from .whitelist import WhitelistStore, classify_entry
@@ -118,6 +119,8 @@ def _build_runtimes(
         blocklist=BlocklistStore(config.blocklist_path),
         request_store=request_store or RequestStore(config.requests_path),
         cache=cache or VerdictCache(config.cache_path),
+        prompt_store=PromptStore(config.prompt_path),
+        age=DEFAULT_AGE,
     )
     return {default.name: default}
 

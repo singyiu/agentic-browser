@@ -14,6 +14,7 @@ from agent_backend.guardian.cache import CacheEntry
 from agent_backend.guardian.config import GuardianConfig
 from agent_backend.guardian.profile_manager import ProfileManager
 from agent_backend.guardian.profiles import load_profiles
+from agent_backend.guardian.prompt import PromptStore
 from agent_backend.guardian.runtime import ProfileRuntime
 from agent_backend.guardian.service import create_app
 from agent_backend.guardian.verdict import Verdict
@@ -943,7 +944,11 @@ _BOB = {"X-Guardian-Token": "tok-bob"}
 
 
 def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
-    """Two teens, each with its own token and file-backed stores (fake caches)."""
+    """Two teens, each with its own token and file-backed stores (fake caches).
+
+    alice is age 12 and bob age 10 (distinct, non-default) so tests can assert the per-profile
+    age reaches the classifier.
+    """
     return {
         "alice": ProfileRuntime(
             name="alice",
@@ -952,6 +957,8 @@ def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
             blocklist=BlocklistStore(str(tmp_path / "alice_bl.json")),
             request_store=RequestStore(str(tmp_path / "alice_req.json")),
             cache=FakeCache(),
+            prompt_store=PromptStore(str(tmp_path / "alice_prompt.txt")),
+            age=12,
         ),
         "bob": ProfileRuntime(
             name="bob",
@@ -960,6 +967,8 @@ def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
             blocklist=BlocklistStore(str(tmp_path / "bob_bl.json")),
             request_store=RequestStore(str(tmp_path / "bob_req.json")),
             cache=FakeCache(),
+            prompt_store=PromptStore(str(tmp_path / "bob_prompt.txt")),
+            age=10,
         ),
     }
 
@@ -1102,6 +1111,7 @@ def test_registry_path_builds_isolated_profiles(tmp_path: Path) -> None:
         default_blocklist_path=":memory:",
         default_requests_path=":memory:",
         default_cache_path=":memory:",
+        default_prompt_path=":memory:",
     )
     app = create_app(
         _config(),

@@ -33,6 +33,7 @@ def main() -> None:  # pragma: no cover - process entry point
             default_blocklist_path=config.blocklist_path,
             default_requests_path=config.requests_path,
             default_cache_path=config.cache_path,
+            default_prompt_path=config.prompt_path,
         )
     except ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)

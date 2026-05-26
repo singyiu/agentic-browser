@@ -14,6 +14,7 @@ from .access_requests import RequestStore
 from .blocklist import BlocklistStore
 from .cache import VerdictCache
 from .profiles import Profile
+from .prompt import PromptStore
 from .whitelist import WhitelistStore
 
 
@@ -31,6 +32,8 @@ class ProfileRuntime:
     blocklist: BlocklistStore
     request_store: RequestStore
     cache: VerdictCache
+    prompt_store: PromptStore
+    age: int
 
 
 def build_runtime(profile: Profile) -> ProfileRuntime:
@@ -43,6 +46,7 @@ def build_runtime(profile: Profile) -> ProfileRuntime:
         profile.blocklist_path,
         profile.requests_path,
         profile.cache_path,
+        profile.prompt_path,
     ):
         try:
             Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
@@ -57,4 +61,6 @@ def build_runtime(profile: Profile) -> ProfileRuntime:
         blocklist=BlocklistStore(profile.blocklist_path),
         request_store=RequestStore(profile.requests_path),
         cache=VerdictCache(profile.cache_path),
+        prompt_store=PromptStore(profile.prompt_path),
+        age=profile.age,
     )

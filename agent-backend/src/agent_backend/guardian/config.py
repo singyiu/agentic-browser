@@ -15,11 +15,14 @@ DEFAULT_MODEL = "claude-haiku-4-5"  # fast + cheap for per-page classification
 DEFAULT_TIMEOUT_S = 180.0  # a classification spawns a `claude` subprocess; give it room
 DEFAULT_SCREENSHOT_THRESHOLD = 0.6
 DEFAULT_AGE = 10  # default child age for age-aware classification (per-profile override)
+MIN_AGE = 1  # accepted per-profile age bounds (set_age rejects outside; the loader clamps)
+MAX_AGE = 25
 DEFAULT_CACHE_PATH = "data/guardian_cache.db"
 DEFAULT_EVENT_LOG_PATH = "data/guardian_events.jsonl"
 DEFAULT_WHITELIST_PATH = "data/guardian_whitelist.json"
 DEFAULT_BLOCKLIST_PATH = "data/guardian_blocklist.json"
 DEFAULT_REQUESTS_PATH = "data/guardian_requests.json"
+DEFAULT_PROMPT_PATH = "data/guardian_prompt.txt"
 DEFAULT_PROFILES_PATH = "data/guardian_profiles.json"
 DEFAULT_ADMIN_PATH = "data/guardian_admin.json"
 
@@ -50,6 +53,8 @@ class GuardianConfig:
     profiles_path: str = ""
     # Path to the parent-PIN hash file written by the first-run /setup wizard (PinStore).
     admin_path: str = DEFAULT_ADMIN_PATH
+    # Legacy single-profile classification prompt; per-profile prompts live under data/profiles/.
+    prompt_path: str = DEFAULT_PROMPT_PATH
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> GuardianConfig:
@@ -82,6 +87,7 @@ class GuardianConfig:
             whitelist_path=_clean(e.get("GUARDIAN_WHITELIST_PATH")) or DEFAULT_WHITELIST_PATH,
             blocklist_path=_clean(e.get("GUARDIAN_BLOCKLIST_PATH")) or DEFAULT_BLOCKLIST_PATH,
             requests_path=_clean(e.get("GUARDIAN_REQUESTS_PATH")) or DEFAULT_REQUESTS_PATH,
+            prompt_path=_clean(e.get("GUARDIAN_PROMPT_PATH")) or DEFAULT_PROMPT_PATH,
             profiles_path=_clean(e.get("GUARDIAN_PROFILES_PATH")) or DEFAULT_PROFILES_PATH,
             admin_path=_clean(e.get("GUARDIAN_ADMIN_PATH")) or DEFAULT_ADMIN_PATH,
             parent_pin=_clean(e.get("GUARDIAN_PARENT_PIN")),

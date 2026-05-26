@@ -22,6 +22,7 @@ _DEFAULTS = {
     "default_blocklist_path": "b",
     "default_requests_path": "r",
     "default_cache_path": "c",
+    "default_prompt_path": "p",
 }
 
 
@@ -170,6 +171,7 @@ def test_rename_custom_path_profile_skips_dir_move(tmp_path: Path) -> None:
         str(tmp_path / "legacy_bl.json"),
         str(tmp_path / "legacy_req.json"),
         str(tmp_path / "legacy_cache.db"),
+        str(tmp_path / "legacy_prompt.txt"),
     )
     mgr = ProfileManager(
         {"default": legacy},
@@ -307,3 +309,81 @@ def test_list_profiles_flags_global(tmp_path: Path) -> None:
     mgr.create("alice")
     flags = {p["name"]: p["is_global"] for p in mgr.list_profiles()}
     assert flags == {"alice": False, "global": True}
+
+
+# --- age + classification prompts -------------------------------------------
+
+
+def test_create_runtime_has_prompt_store_and_default_age(tmp_path: Path) -> None:
+    rt, _ = _manager(tmp_path).create("alice")
+    assert rt.age == 10
+    rt.prompt_store.set("no anonymous chat rooms")
+    assert rt.prompt_store.current() == "no anonymous chat rooms"
+
+
+def test_global_runtime_has_prompt_store(tmp_path: Path) -> None:
+    g = _manager(tmp_path).global_runtime()
+    g.prompt_store.set("household rule")
+    assert g.prompt_store.current() == "household rule"
+
+
+def test_set_age_updates_profile_and_runtime(tmp_path: Path) -> None:
+    mgr = _manager(tmp_path)
+    mgr.create("alice")
+    rt = mgr.set_age("alice", 14)
+    assert rt.age == 14
+    assert mgr.snapshot()["alice"].age == 14
+
+
+def test_set_age_persists(tmp_path: Path) -> None:
+    mgr = _manager(tmp_path)
+    mgr.create("alice")
+    mgr.set_age("alice", 15)
+    reg = load_profiles(str(tmp_path / "profiles.json"), **_DEFAULTS)
+    assert next(p for p in reg.all() if p.name == "alice").age == 15
+
+
+def test_set_age_rejects_global(tmp_path: Path) -> None:
+    with pytest.raises(InvalidProfileNameError):
+        _manager(tmp_path).set_age("global", 12)
+
+
+def test_set_age_rejects_out_of_range(tmp_path: Path) -> None:
+    from agent_backend.guardian.profile_manager import InvalidProfileAgeError
+
+    mgr = _manager(tmp_path)
+    mgr.create("alice")
+    for bad in (0, 26, -3):
+        with pytest.raises(InvalidProfileAgeError):
+            mgr.set_age("alice", bad)
+
+
+def test_set_age_unknown_raises(tmp_path: Path) -> None:
+    with pytest.raises(ProfileNotFoundError):
+        _manager(tmp_path).set_age("ghost", 12)
+
+
+def test_rename_preserves_age(tmp_path: Path) -> None:
+    mgr = _manager(tmp_path)
+    mgr.create("alice")
+    mgr.set_age("alice", 16)
+    mgr.rename("alice", "alicia")
+    assert mgr.snapshot()["alicia"].age == 16
+
+
+def test_merged_policy_uses_age_default_when_no_prompt(tmp_path: Path) -> None:
+    mgr = _manager(tmp_path)
+    rt, _ = mgr.create("alice")  # age 10, no saved prompt
+    policy = mgr.merged_policy(rt)
+    assert "ADDITIONAL HOUSEHOLD GUIDANCE" in policy
+    assert "10" in policy
+
+
+def test_merged_policy_includes_global_and_profile(tmp_path: Path) -> None:
+    mgr = _manager(tmp_path)
+    rt, _ = mgr.create("alice")
+    mgr.global_runtime().prompt_store.set("GLOBAL_RULE")
+    rt.prompt_store.set("KID_RULE")
+    policy = mgr.merged_policy(rt)
+    assert "GLOBAL_RULE" in policy
+    assert "KID_RULE" in policy

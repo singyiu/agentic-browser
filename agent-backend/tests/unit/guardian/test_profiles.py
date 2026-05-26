@@ -12,6 +12,7 @@ from agent_backend.guardian.profiles import (
     PROFILE_NAME_RE,
     Profile,
     ProfileRegistry,
+    default_profile_paths,
     load_profiles,
     save_profiles,
 )
@@ -22,6 +23,7 @@ _DEFAULTS = {
     "default_blocklist_path": "data/guardian_blocklist.json",
     "default_requests_path": "data/guardian_requests.json",
     "default_cache_path": "data/guardian_cache.db",
+    "default_prompt_path": "data/guardian_prompt.txt",
 }
 
 
@@ -34,8 +36,8 @@ def _write(tmp_path: Path, data: object) -> str:
 def _registry() -> ProfileRegistry:
     return ProfileRegistry(
         (
-            Profile("alice", "tok-alice", "a/wl.json", "a/bl.json", "a/req.json", "a/cache.db"),
-            Profile("bob", "tok-bob", "b/wl.json", "b/bl.json", "b/req.json", "b/cache.db"),
+            Profile("alice", "tA", "a/wl.json", "a/bl.json", "a/req.json", "a/cache.db", "a/p.txt"),
+            Profile("bob", "tB", "b/wl.json", "b/bl.json", "b/req.json", "b/cache.db", "b/p.txt"),
         )
     )
 
@@ -170,6 +172,7 @@ def test_load_no_file_no_default_token_raises(tmp_path: Path) -> None:
             default_blocklist_path="b",
             default_requests_path="r",
             default_cache_path="c",
+            default_prompt_path="p",
         )
 
 
@@ -183,6 +186,7 @@ def test_load_empty_list_no_default_token_raises(tmp_path: Path) -> None:
             default_blocklist_path="b",
             default_requests_path="r",
             default_cache_path="c",
+            default_prompt_path="p",
         )
 
 
@@ -221,8 +225,17 @@ def test_save_profiles_round_trip(tmp_path: Path) -> None:
     save_profiles(profiles, path)
     reloaded = load_profiles(path, **_DEFAULTS)
 
-    def key(p: Profile) -> tuple[str, ...]:
-        return (p.name, p.token, p.whitelist_path, p.blocklist_path, p.requests_path, p.cache_path)
+    def key(p: Profile) -> tuple[object, ...]:
+        return (
+            p.name,
+            p.token,
+            p.whitelist_path,
+            p.blocklist_path,
+            p.requests_path,
+            p.cache_path,
+            p.prompt_path,
+            p.age,
+        )
 
     assert {key(p) for p in reloaded.all()} == {key(p) for p in profiles}
 
@@ -239,7 +252,8 @@ def test_save_profiles_atomic_keeps_original_on_replace_failure(
 ) -> None:
     path = str(tmp_path / "out.json")
     save_profiles(
-        (Profile("alice", "tok-alice", "a/wl.json", "a/bl.json", "a/req.json", "a/cache.db"),), path
+        (Profile("alice", "tA", "a/wl.json", "a/bl.json", "a/req.json", "a/cache.db", "a/p.txt"),),
+        path,
     )
     before = Path(path).read_text(encoding="utf-8")
 
@@ -249,10 +263,65 @@ def test_save_profiles_atomic_keeps_original_on_replace_failure(
     monkeypatch.setattr("agent_backend.guardian.profiles.os.replace", boom)
     with pytest.raises(OSError):
         save_profiles(
-            (Profile("bob", "tok-bob", "b/wl.json", "b/bl.json", "b/req.json", "b/cache.db"),), path
+            (
+                Profile(
+                    "bob", "tB", "b/wl.json", "b/bl.json", "b/req.json", "b/cache.db", "b/p.txt"
+                ),
+            ),
+            path,
         )
 
     # A failed replace must leave the original file intact (no partial write)...
     assert Path(path).read_text(encoding="utf-8") == before
     # ...and not litter the directory with a leftover temp file.
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+# --- age + prompt_path (classification prompts) -----------------------------
+
+
+def test_default_profile_paths_returns_five_with_prompt() -> None:
+    paths = default_profile_paths("alice")
+    assert len(paths) == 5
+    assert paths[4].endswith("/alice/prompt.txt")
+
+
+def test_load_reads_age_from_entry(tmp_path: Path) -> None:
+    path = _write(tmp_path, [{"name": "alice", "token": "tA", "age": 14}])
+    assert _find(load_profiles(path, **_DEFAULTS), "alice").age == 14
+
+
+def test_load_missing_age_defaults_to_10(tmp_path: Path) -> None:
+    path = _write(tmp_path, [{"name": "alice", "token": "tA"}])
+    assert _find(load_profiles(path, **_DEFAULTS), "alice").age == 10
+
+
+def test_load_invalid_age_defaults_to_10(tmp_path: Path) -> None:
+    path = _write(tmp_path, [{"name": "alice", "token": "tA", "age": "not-a-number"}])
+    assert _find(load_profiles(path, **_DEFAULTS), "alice").age == 10
+
+
+def test_load_out_of_range_age_defaults_to_10(tmp_path: Path) -> None:
+    path = _write(tmp_path, [{"name": "alice", "token": "tA", "age": 99}])
+    assert _find(load_profiles(path, **_DEFAULTS), "alice").age == 10
+
+
+def test_load_derives_default_prompt_path(tmp_path: Path) -> None:
+    path = _write(tmp_path, [{"name": "alice", "token": "tA"}])
+    assert (
+        _find(load_profiles(path, **_DEFAULTS), "alice").prompt_path
+        == "data/profiles/alice/prompt.txt"
+    )
+
+
+def test_save_load_round_trip_preserves_age_and_prompt_path(tmp_path: Path) -> None:
+    src = _write(
+        tmp_path,
+        [{"name": "alice", "token": "tA", "age": 13, "prompt_path": "/custom/p.txt"}],
+    )
+    loaded = load_profiles(src, **_DEFAULTS)
+    out = str(tmp_path / "out.json")
+    save_profiles(loaded.all(), out)
+    alice = _find(load_profiles(out, **_DEFAULTS), "alice")
+    assert alice.age == 13
+    assert alice.prompt_path == "/custom/p.txt"

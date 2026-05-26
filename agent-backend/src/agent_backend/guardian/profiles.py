@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import ConfigError
+from .config import DEFAULT_AGE, MAX_AGE, MIN_AGE
 
 DEFAULT_PROFILE_NAME = "default"
 # The shared all-kids profile: no token, no browser. Its allow/block rules are layered
@@ -42,6 +43,8 @@ class Profile:
     blocklist_path: str
     requests_path: str
     cache_path: str
+    prompt_path: str
+    age: int = DEFAULT_AGE
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,14 +57,17 @@ class ProfileRegistry:
         return self.profiles
 
 
-def default_profile_paths(name: str, base: str = PROFILE_DATA_DIR) -> tuple[str, str, str, str]:
-    """Default (whitelist, blocklist, requests, cache) paths for ``name`` under ``base``."""
+def default_profile_paths(
+    name: str, base: str = PROFILE_DATA_DIR
+) -> tuple[str, str, str, str, str]:
+    """Default (whitelist, blocklist, requests, cache, prompt) paths for ``name`` under ``base``."""
     root = f"{base}/{name}"
     return (
         f"{root}/whitelist.json",
         f"{root}/blocklist.json",
         f"{root}/requests.json",
         f"{root}/cache.db",
+        f"{root}/prompt.txt",
     )
 
 
@@ -73,6 +79,7 @@ def load_profiles(
     default_blocklist_path: str,
     default_requests_path: str,
     default_cache_path: str,
+    default_prompt_path: str,
 ) -> ProfileRegistry:
     """Build the registry from the JSON file, or a single default profile.
 
@@ -101,6 +108,7 @@ def load_profiles(
                 blocklist_path=default_blocklist_path,
                 requests_path=default_requests_path,
                 cache_path=default_cache_path,
+                prompt_path=default_prompt_path,
             ),
         )
     )
@@ -125,7 +133,7 @@ def save_profiles(profiles: Iterable[Profile], path: str) -> None:
         raise
 
 
-def _profile_to_dict(profile: Profile) -> dict[str, str]:
+def _profile_to_dict(profile: Profile) -> dict[str, object]:
     return {
         "name": profile.name,
         "token": profile.token,
@@ -133,6 +141,8 @@ def _profile_to_dict(profile: Profile) -> dict[str, str]:
         "blocklist_path": profile.blocklist_path,
         "requests_path": profile.requests_path,
         "cache_path": profile.cache_path,
+        "prompt_path": profile.prompt_path,
+        "age": profile.age,
     }
 
 
@@ -146,6 +156,25 @@ def _parse(path: Path) -> list[object]:
     return data
 
 
+def _coerce_age(value: object) -> int:
+    """Parse a profile age; fall back to DEFAULT_AGE for missing/invalid/out-of-range values.
+
+    Lenient on load (a hand-edited bad value must not crash startup); ``set_age`` is strict.
+    """
+    if isinstance(value, bool):  # bool is an int subclass — reject before the int branch
+        return DEFAULT_AGE
+    if isinstance(value, int):
+        age = value
+    elif isinstance(value, str):
+        try:
+            age = int(value)
+        except ValueError:
+            return DEFAULT_AGE
+    else:
+        return DEFAULT_AGE
+    return age if MIN_AGE <= age <= MAX_AGE else DEFAULT_AGE
+
+
 def _build_profile(entry: object) -> Profile:
     if not isinstance(entry, dict):
         raise ConfigError("Each guardian profile must be a JSON object with name and token.")
@@ -155,7 +184,7 @@ def _build_profile(entry: object) -> Profile:
         raise ConfigError(f"Invalid profile name {name!r}: use only letters, digits, '-' or '_'.")
     if not token:
         raise ConfigError(f"Profile {name!r} has an empty token.")
-    wl, bl, req, cache = default_profile_paths(name)
+    wl, bl, req, cache, prompt = default_profile_paths(name)
     return Profile(
         name=name,
         token=token,
@@ -163,6 +192,8 @@ def _build_profile(entry: object) -> Profile:
         blocklist_path=str(entry.get("blocklist_path") or bl),
         requests_path=str(entry.get("requests_path") or req),
         cache_path=str(entry.get("cache_path") or cache),
+        prompt_path=str(entry.get("prompt_path") or prompt),
+        age=_coerce_age(entry.get("age")),
     )
 
 
