@@ -57,10 +57,14 @@ class FakeClassifier:
         payload: dict,
         *,
         screenshot_b64: str | None = None,
+        age: int = 10,
+        policy: str = "",
         approved_topics: tuple[str, ...] = (),
         disallowed_topics: tuple[str, ...] = (),
     ):
         self.calls += 1
+        self.age = age
+        self.policy = policy
         self.approved_topics = approved_topics
         self.disallowed_topics = disallowed_topics
         if isinstance(self._result, Exception):
@@ -1464,3 +1468,137 @@ def test_global_list_edit_clears_every_teen_cache(tmp_path: Path) -> None:
     client.post("/review/blocklist", json={"entry": "sometopic", "profile": "global"}, headers=_PIN)
     assert runtimes["alice"].cache.cleared >= 1
     assert runtimes["bob"].cache.cleared >= 1
+
+
+# --- parent classification-prompt management (/review/prompt) ----------------
+
+
+def test_review_prompt_requires_pin(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    assert client.get("/review/prompt").status_code == 403
+
+
+def test_review_prompt_get_503_when_pin_unset(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path, parent_pin="")
+    assert client.get("/review/prompt").status_code == 503
+
+
+def test_review_prompt_get_returns_stored_default_merged_and_age(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    client.post("/review/prompt", json={"profile": "alice", "prompt": "no chat"}, headers=_PIN)
+    body = client.get("/review/prompt?profile=alice", headers=_PIN).json()
+    assert body["profile"] == "alice"
+    assert body["is_global"] is False
+    assert body["age"] == 10
+    assert body["prompt"] == "no chat"
+    assert "ADDITIONAL HOUSEHOLD GUIDANCE" in body["merged"]
+    assert body["default"].strip()  # an age-band starter is offered to the parent
+
+
+def test_review_prompt_post_sets_prompt_and_age(tmp_path: Path) -> None:
+    client, mgr = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    r = client.post(
+        "/review/prompt",
+        json={"profile": "alice", "prompt": "allow coding", "age": 14},
+        headers=_PIN,
+    )
+    assert r.status_code == 200
+    assert r.json()["age"] == 14
+    assert mgr.snapshot()["alice"].age == 14
+    assert mgr.snapshot()["alice"].prompt_store.current() == "allow coding"
+
+
+def test_review_prompt_targets_global(tmp_path: Path) -> None:
+    client, mgr = _pm_client(tmp_path)
+    r = client.post(
+        "/review/prompt", json={"profile": "global", "prompt": "household rule"}, headers=_PIN
+    )
+    assert r.status_code == 200
+    assert mgr.global_runtime().prompt_store.current() == "household rule"
+
+
+def test_review_prompt_global_with_age_rejected(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    r = client.post(
+        "/review/prompt", json={"profile": "global", "prompt": "x", "age": 12}, headers=_PIN
+    )
+    assert r.status_code == 422
+
+
+def test_review_prompt_allows_newlines(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    r = client.post(
+        "/review/prompt", json={"profile": "alice", "prompt": "line one\nline two"}, headers=_PIN
+    )
+    assert r.status_code == 200
+
+
+def test_review_prompt_rejects_control_char(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    r = client.post(
+        "/review/prompt", json={"profile": "alice", "prompt": "bad\x00null"}, headers=_PIN
+    )
+    assert r.status_code == 422
+
+
+def test_review_prompt_rejects_too_long(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    r = client.post("/review/prompt", json={"profile": "alice", "prompt": "x" * 5000}, headers=_PIN)
+    assert r.status_code == 422
+
+
+def test_review_prompt_rejects_out_of_range_age(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alice"}, headers=_PIN)
+    r = client.post(
+        "/review/prompt", json={"profile": "alice", "prompt": "ok", "age": 99}, headers=_PIN
+    )
+    assert r.status_code == 422
+
+
+def test_review_prompt_post_clears_only_that_teen_cache(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes)
+    client.post("/review/prompt", json={"profile": "alice", "prompt": "rule"}, headers=_PIN)
+    assert runtimes["alice"].cache.cleared >= 1
+    assert runtimes["bob"].cache.cleared == 0
+
+
+def test_global_prompt_edit_clears_every_teen_cache(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes)
+    client.post("/review/prompt", json={"profile": "global", "prompt": "rule"}, headers=_PIN)
+    assert runtimes["alice"].cache.cleared >= 1
+    assert runtimes["bob"].cache.cleared >= 1
+
+
+# --- classify() passes age + merged policy to the classifier -----------------
+
+
+def test_classify_passes_age_and_policy_to_classifier(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)  # alice is age 12
+    fake = FakeClassifier(Verdict("allow", "", 0.95))
+    resp = _multi_client(runtimes, classifier=fake).post(
+        "/classify", json={"url": "http://x"}, headers=_ALICE
+    )
+    assert resp.status_code == 200
+    assert fake.age == 12
+    # The age-12 default guidance is merged in when the teen has saved no prompt.
+    assert "ADDITIONAL HOUSEHOLD GUIDANCE" in fake.policy
+    assert "12" in fake.policy
+
+
+def test_classify_uses_updated_prompt_after_edit(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    fake = FakeClassifier(Verdict("allow", "", 0.95))
+    client = _multi_client(runtimes, classifier=fake)
+    client.post(
+        "/review/prompt", json={"profile": "alice", "prompt": "SENTINEL_RULE"}, headers=_PIN
+    )
+    client.post("/classify", json={"url": "http://x"}, headers=_ALICE)
+    assert "SENTINEL_RULE" in fake.policy

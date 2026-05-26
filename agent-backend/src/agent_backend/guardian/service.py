@@ -21,7 +21,7 @@ from .access_requests import RequestStore
 from .blocklist import BlocklistStore
 from .cache import VerdictCache
 from .classifier import Classifier
-from .config import DEFAULT_AGE, GuardianConfig
+from .config import DEFAULT_AGE, MAX_AGE, MIN_AGE, GuardianConfig
 from .event_log import EventLog
 from .metrics import GuardianMetrics
 from .normalize import extract_host, normalize_url
@@ -33,7 +33,7 @@ from .profile_manager import (
     ProfileNotFoundError,
 )
 from .profiles import DEFAULT_PROFILE_NAME, GLOBAL_PROFILE_NAME, ProfileRegistry
-from .prompt import PromptStore
+from .prompt import PromptStore, default_profile_prompt
 from .runtime import ProfileRuntime, build_runtime
 from .verdict import Verdict
 from .whitelist import WhitelistStore, classify_entry
@@ -60,6 +60,21 @@ def _parse_activity_limit(raw: str | None) -> int:
     except ValueError:
         return ACTIVITY_LIMIT_DEFAULT
     return max(1, min(value, ACTIVITY_LIMIT_MAX))
+
+
+_MAX_PROMPT_CHARS = 4000
+
+
+def _valid_prompt_text(text: str) -> bool:
+    """A bounded, multi-line classification prompt: printable text plus tabs/newlines.
+
+    Unlike a single list entry (which uses ``str.isprintable``), a prompt may span lines, so
+    newlines and tabs are allowed and other control characters are rejected. Empty is valid
+    (it resets the profile to its age-band default).
+    """
+    if len(text) > _MAX_PROMPT_CHARS:
+        return False
+    return all(ch in "\n\t" or ch.isprintable() for ch in text)
 
 
 def _ms(start: float) -> int:
@@ -218,15 +233,17 @@ def create_app(
         start = time.monotonic()
         loop = asyncio.get_running_loop()
 
-        # Hot-reload this teen's lists + the shared Global lists; any change invalidates the
-        # teen's cached verdicts (Global edits are picked up here lazily, per teen).
+        # Hot-reload this teen's lists + prompt and the shared Global lists + prompt; any change
+        # invalidates the teen's cached verdicts (Global edits are picked up here lazily, per teen).
         gl = _pm.global_runtime()
         changed = False
         for reloader in (
             rt.whitelist.reload_if_changed,
             rt.blocklist.reload_if_changed,
+            rt.prompt_store.reload_if_changed,
             gl.whitelist.reload_if_changed,
             gl.blocklist.reload_if_changed,
+            gl.prompt_store.reload_if_changed,
         ):
             changed = await loop.run_in_executor(None, reloader) or changed
         if changed:
@@ -277,6 +294,8 @@ def create_app(
                 classifier.classify(
                     body,
                     screenshot_b64=screenshot,
+                    age=rt.age,
+                    policy=_pm.merged_policy(rt),
                     approved_topics=(*wl.content_entries, *gwl.content_entries),
                     disallowed_topics=(*bl.content_entries, *gbl.content_entries),
                 ),
@@ -689,6 +708,74 @@ def create_app(
         )
         return JSONResponse({"events": events})
 
+    async def review_prompt(request: Request) -> JSONResponse:
+        # Parent-facing per-profile (or Global) classification-prompt view/edit, PIN-gated. GET
+        # returns the stored prompt, the age-band default, the effective merged guidance, and (for
+        # a teen) the age. POST saves the prompt + optional age, then clears the verdict cache(s)
+        # so the change applies on the next classification.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        if request.method == "GET":
+            rt = _resolve_parent_profile(request.query_params.get("profile", "").strip())
+            if rt is None:
+                return JSONResponse({"error": "profile required"}, status_code=422)
+            is_global = rt.name == GLOBAL_PROFILE_NAME
+            return JSONResponse(
+                {
+                    "profile": rt.name,
+                    "is_global": is_global,
+                    "age": None if is_global else rt.age,
+                    "prompt": rt.prompt_store.current(),
+                    "default": "" if is_global else default_profile_prompt(rt.age),
+                    "merged": "" if is_global else _pm.merged_policy(rt),
+                }
+            )
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        rt = _resolve_parent_profile(str(body.get("profile", "")).strip())
+        if rt is None:
+            return JSONResponse({"error": "profile required"}, status_code=422)
+        prompt = str(body.get("prompt", ""))
+        if not _valid_prompt_text(prompt):
+            return JSONResponse(
+                {"error": f"prompt must be printable text up to {_MAX_PROMPT_CHARS} chars"},
+                status_code=422,
+            )
+        # Validate the optional age fully before any write, so a bad age never leaves a
+        # half-applied edit (prompt saved but age rejected).
+        is_global = rt.name == GLOBAL_PROFILE_NAME
+        new_age: int | None = None
+        age_raw = body.get("age")
+        if age_raw is not None:
+            if is_global:
+                return JSONResponse({"error": "the Global profile has no age"}, status_code=422)
+            try:
+                new_age = int(age_raw)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "age must be an integer"}, status_code=422)
+            if not MIN_AGE <= new_age <= MAX_AGE:
+                return JSONResponse(
+                    {"error": f"age must be between {MIN_AGE} and {MAX_AGE}"}, status_code=422
+                )
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, rt.prompt_store.set, prompt)
+            if new_age is not None:
+                rt = _pm.set_age(rt.name, new_age)
+            await _clear_caches_after_list_change(rt)
+        except OSError:
+            return JSONResponse({"error": "prompt write failed"}, status_code=500)
+        event_log.log(
+            "parent_prompt_post",
+            profile=rt.name,
+            age=None if is_global else rt.age,
+            length=len(prompt),
+        )
+        return JSONResponse({"ok": True, "age": None if is_global else rt.age})
+
     async def settings_change_pin(request: Request) -> JSONResponse:
         # Rotate the parent PIN. Re-authenticate with the *current* PIN from the body (not the
         # header) so an unlocked-but-unattended tab can't silently change the credential. We
@@ -821,6 +908,7 @@ def create_app(
             Route("/review/whitelist", review_whitelist, methods=["GET", "POST", "DELETE"]),
             Route("/review/blocklist", review_blocklist, methods=["GET", "POST", "DELETE"]),
             Route("/review/activity", review_activity, methods=["GET"]),
+            Route("/review/prompt", review_prompt, methods=["GET", "POST"]),
             Route("/settings/pin", settings_change_pin, methods=["POST"]),
             Route("/profiles", profiles_endpoint, methods=["GET", "POST"]),
             # More-specific paths first so {name} doesn't swallow /rename and /token.
