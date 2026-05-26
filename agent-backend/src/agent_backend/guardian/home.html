@@ -6,7 +6,7 @@
     <meta name="robots" content="noindex" />
     <title>Aegis</title>
     <link rel="stylesheet" href="/static/aegis-tokens.css" />
-    <link rel="stylesheet" href="/static/aegis-components.css?v=2" />
+    <link rel="stylesheet" href="/static/aegis-components.css?v=3" />
     <link rel="stylesheet" href="/static/aegis-shell.css" />
   </head>
   <body>
@@ -148,7 +148,7 @@
                     <path d="m9 12 2 2 4-4" />
                   </svg>
                 </span>
-                <span class="nav-item__label">Lists</span>
+                <span class="nav-item__label">Web Page Classification</span>
               </a>
             </li>
             <li>
@@ -346,17 +346,52 @@
             id="sec-whitelist"
             class="shell-section"
             tabindex="-1"
-            aria-label="Allow and block lists"
+            aria-label="Web page classification"
             hidden
           >
-            <h1>Allow &amp; block lists</h1>
+            <h1>Web Page Classification</h1>
             <div class="card">
               <label class="settings-field" for="wl-profile">Profile</label>
               <select id="wl-profile" class="wl-profile-select"></select>
               <p class="muted">
-                Editing lists for <strong id="ls-active">…</strong> — a kid's
-                own rules win over Global.
+                Editing classification for
+                <strong id="ls-active">…</strong> — a kid's own rules win over
+                Global.
               </p>
+            </div>
+
+            <h2>Classification prompt</h2>
+            <div class="card">
+              <div id="cp-age-field" class="cp-age-field">
+                <label class="settings-field" for="cp-age">Child age</label>
+                <input
+                  id="cp-age"
+                  type="number"
+                  min="1"
+                  max="25"
+                  class="cp-age-input"
+                />
+              </div>
+              <label class="settings-field" for="cp-prompt"
+                >Extra guidance, added on top of the built-in safety
+                policy</label
+              >
+              <textarea
+                id="cp-prompt"
+                rows="10"
+                placeholder="e.g. Allow educational coding sites; block open chat with strangers."
+              ></textarea>
+              <div class="cp-actions">
+                <button id="cp-save" class="primary" type="button">Save</button>
+                <button id="cp-reset" class="ghost" type="button">
+                  Reset to default
+                </button>
+              </div>
+              <p id="cp-hint" class="hint" aria-live="polite"></p>
+              <details class="cp-preview">
+                <summary>Preview merged guidance</summary>
+                <pre id="cp-merged" class="cp-merged"></pre>
+              </details>
             </div>
 
             <h2>Allow list</h2>

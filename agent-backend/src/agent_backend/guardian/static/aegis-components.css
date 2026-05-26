@@ -122,6 +122,27 @@ select:focus {
   background: var(--aegis-cream);
 }
 
+/* ----- Classification-prompt editor (Web Page Classification page) ----- */
+#cp-prompt { width: 100%; min-height: 9rem; resize: vertical; }
+.cp-age-field { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.cp-age-input { width: 6rem; }
+.cp-actions { display: flex; gap: var(--space-3); margin-top: var(--space-3); }
+.cp-preview { margin-top: var(--space-4); }
+.cp-preview summary { cursor: pointer; color: var(--fg-2); font-size: var(--size-sm); }
+.cp-merged {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  background: var(--bg-3);
+  border-radius: var(--radius-md);
+  color: var(--fg-2);
+  font-size: var(--size-sm);
+  font-family: var(--font-sans);
+  max-height: 18rem;
+  overflow: auto;
+}
+
 /* ----- Cards ----- */
 .card {
   background: var(--bg-2);

@@ -198,6 +198,79 @@
     }
     if (wl.ok) renderList(ALLOW, byProfile((await wl.json()).entries, profile));
     if (bl.ok) renderList(BLOCK, byProfile((await bl.json()).entries, profile));
+    await loadPrompt();
+  }
+
+  // The selected profile's classification prompt: stored text in the textarea, the age-band
+  // default as placeholder, and the effective merged guidance (Global + this profile) previewed.
+  async function loadPrompt() {
+    const profile = $("wl-profile").value;
+    let r;
+    try {
+      r = await api("/review/prompt?profile=" + encodeURIComponent(profile));
+    } catch (_e) {
+      return;
+    }
+    if (!r.ok) return;
+    const data = await r.json();
+    $("cp-prompt").value = data.prompt || "";
+    $("cp-prompt").placeholder = data.default || "";
+    $("cp-merged").textContent = data.merged || "";
+    $("cp-age-field").hidden = !!data.is_global;
+    if (!data.is_global) $("cp-age").value = data.age == null ? "" : data.age;
+    $("cp-hint").textContent =
+      !data.is_global && !(data.prompt || "").trim()
+        ? "No custom prompt yet — the age-appropriate default (previewed below) applies."
+        : "";
+  }
+
+  async function savePrompt() {
+    const profile = $("wl-profile").value;
+    const body = { profile, prompt: $("cp-prompt").value };
+    if (!$("cp-age-field").hidden) {
+      const age = parseInt($("cp-age").value, 10);
+      if (Number.isFinite(age)) body.age = age;
+    }
+    let r;
+    try {
+      r = await api("/review/prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (r.ok) {
+      toast("Saved");
+      loadPrompt();
+    } else {
+      const err = await r.json().catch(() => ({}));
+      $("cp-hint").textContent = err.error || "Could not save the prompt.";
+    }
+  }
+
+  // Reset = clear the stored prompt (POST empty); the age-band default then applies again.
+  async function resetPrompt() {
+    const profile = $("wl-profile").value;
+    let r;
+    try {
+      r = await api("/review/prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile, prompt: "" }),
+      });
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (r.ok) {
+      toast("Reset to default");
+      loadPrompt();
+    } else {
+      $("cp-hint").textContent = "Could not reset the prompt.";
+    }
   }
 
   function byProfile(entries, profile) {
@@ -709,6 +782,8 @@
       if (e.key === "Enter") addListEntry(BLOCK);
     });
     $("wl-profile").addEventListener("change", loadLists);
+    $("cp-save").addEventListener("click", savePrompt);
+    $("cp-reset").addEventListener("click", resetPrompt);
     $("act-profile").addEventListener("change", loadActivity);
     $("act-refresh").addEventListener("click", loadActivity);
     $("set-pin-btn").addEventListener("click", submitChangePin);
