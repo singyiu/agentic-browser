@@ -50,11 +50,14 @@ async function sendToTab(tabId, message, retries = 3) {
 // content-script-only path (sendToTab -> location.replace) failed silently whenever the
 // script was gone (e.g. YouTube SPA document swaps), leaving the page playing. The
 // content-script fade is fired first as a best-effort visual and is intentionally not awaited.
-async function blockTab(tabId, reason, pageUrl) {
+async function blockTab(tabId, reason, pageUrl, opts = {}) {
   sendToTab(tabId, { type: "BLOCK", reason });
-  const params =
+  let params =
     `?reason=${encodeURIComponent(reason || "")}` +
     `&url=${encodeURIComponent(pageUrl || "")}`;
+  if (opts.kind === "search") {
+    params += `&kind=search&query=${encodeURIComponent(opts.query || "")}`;
+  }
   const blockUrl = chrome.runtime.getURL("block.html") + params;
   try {
     await chrome.tabs.update(tabId, { url: blockUrl });
@@ -90,6 +93,58 @@ async function classify(payload) {
   }
 }
 
+// Known search engines -> the URL param that carries the typed query. Unknown hosts fall back
+// to ?q= (a near-universal search convention), so lesser-known engines are still covered.
+const SEARCH_PARAMS = {
+  "google.com": "q",
+  "www.google.com": "q",
+  "bing.com": "q",
+  "www.bing.com": "q",
+  "duckduckgo.com": "q",
+  "search.yahoo.com": "p",
+  "youtube.com": "search_query",
+  "www.youtube.com": "search_query",
+  "m.youtube.com": "search_query",
+};
+
+// Pull the search terms out of a search-engine URL. Returns null when the navigation isn't a
+// search, so ordinary page loads skip the keyword check entirely.
+function parseSearchQuery(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    const param = SEARCH_PARAMS[u.hostname] || "q";
+    const trimmed = (u.searchParams.get(param) || "").trim();
+    return trimmed ? trimmed : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+// Ask the backend whether a bare search query is allowed for this profile. Fail-open like
+// classify(): a backend error/timeout never blocks searching.
+async function classifySearchQuery(query) {
+  const cfg = await getConfig();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${cfg.endpoint}/search-classify`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Guardian-Token": cfg.token,
+      },
+      body: JSON.stringify({ query }),
+      signal: controller.signal,
+    });
+    if (!resp.ok) return { verdict: "allow", reason: "backend_error" };
+    return await resp.json();
+  } catch (_e) {
+    return { verdict: "allow", reason: "unreachable" }; // fail-open
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function captureScreenshot(tabId) {
   try {
     const tab = await chrome.tabs.get(tabId);
@@ -106,6 +161,27 @@ async function handleNavigation(tabId, url) {
   if (shouldSkip(url)) return;
   console.log(`[guardian] nav tab=${tabId} url=${url}`);
   notifyUrlKey(tabId, url); // (re)start dwell timing for the active page
+
+  // Search-keyword gate: when this navigation is a search, judge the QUERY first. A blocked
+  // query goes straight to the search-mode block page; an allowed query falls through to the
+  // normal page classification below. Keyed separately ("search:<url>") in the hot cache.
+  const searchQuery = parseSearchQuery(url);
+  if (searchQuery) {
+    const searchKey = `search:${url}`;
+    let sc = hotCache.get(searchKey);
+    if (!sc || Date.now() - sc.ts >= HOT_TTL_MS) {
+      const result = await classifySearchQuery(searchQuery);
+      sc = { verdict: result.verdict, reason: result.reason, ts: Date.now() };
+      hotCache.set(searchKey, sc);
+    }
+    if (sc.verdict === "block") {
+      await blockTab(tabId, sc.reason || "This search isn't allowed.", url, {
+        kind: "search",
+        query: searchQuery,
+      });
+      return;
+    }
+  }
 
   const cached = hotCache.get(url);
   if (cached && Date.now() - cached.ts < HOT_TTL_MS) {
@@ -158,6 +234,12 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((d) => {
 // instead of being re-blocked by the stale 5-minute hot cache.
 const BLOCK_PAGE_URL = chrome.runtime.getURL("block.html");
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "CLASSIFY_SEARCH") {
+    // Proxy a content-script search check through the SW: a content script on a web origin
+    // can't call the backend directly (CORS), but the SW holds host permissions.
+    classifySearchQuery(String(message.query || "")).then(sendResponse);
+    return true; // async response
+  }
   if (message?.type === "CLEAR_HOTCACHE") {
     // Only honor this from our own block page — not from content scripts running in web
     // pages (which could otherwise evict a verdict to fish for a fail-open).
@@ -169,6 +251,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     hotCache.delete(message.url);
+    hotCache.delete(`search:${message.url}`); // also drop the cached search verdict
     sendResponse({ ok: true });
   }
   return false; // synchronous response
