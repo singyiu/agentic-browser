@@ -1760,3 +1760,72 @@ def test_reject_search_request_leaves_search_allow_empty(tmp_path: Path) -> None
         "/review/decision", json={"id": post.json()["id"], "decision": "reject"}, headers=_PIN
     )
     assert runtimes["alice"].search_allow.current().values == ()
+
+
+# --- /review/search-keywords (parent keyword list management) ---------------
+
+
+def test_review_search_keywords_requires_pin(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path), classifier=FakeClassifier(Verdict("allow")))
+    assert client.get("/review/search-keywords/allow").status_code == 403
+
+
+def test_review_search_keywords_post_then_get(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes, classifier=FakeClassifier(Verdict("allow")))
+    post = client.post(
+        "/review/search-keywords/block",
+        json={"entry": "gambling", "profile": "alice"},
+        headers=_PIN,
+    )
+    assert post.status_code == 200
+    assert runtimes["alice"].search_block.current().matches("online gambling") == "gambling"
+    got = client.get("/review/search-keywords/block", headers=_PIN).json()
+    assert {"value": "gambling", "profile": "alice"} in got["entries"]
+
+
+def test_review_search_keywords_delete(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    runtimes["alice"].search_allow.add("minecraft")
+    client = _multi_client(runtimes, classifier=FakeClassifier(Verdict("allow")))
+    client.request(
+        "DELETE",
+        "/review/search-keywords/allow",
+        json={"entry": "minecraft", "profile": "alice"},
+        headers=_PIN,
+    )
+    assert runtimes["alice"].search_allow.current().values == ()
+
+
+def test_review_search_keywords_rejects_multiline_entry(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path), classifier=FakeClassifier(Verdict("allow")))
+    resp = client.post(
+        "/review/search-keywords/allow",
+        json={"entry": "bad\nentry", "profile": "alice"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 422
+
+
+def test_review_search_keywords_targets_global(tmp_path: Path) -> None:
+    client = _multi_client(_two_profiles(tmp_path), classifier=FakeClassifier(Verdict("allow")))
+    resp = client.post(
+        "/review/search-keywords/block",
+        json={"entry": "casino", "profile": "global"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    got = client.get("/review/search-keywords/block", headers=_PIN).json()
+    assert any(e["profile"] == "global" and e["value"] == "casino" for e in got["entries"])
+
+
+def test_review_search_keywords_clears_cache(tmp_path: Path) -> None:
+    runtimes = _two_profiles(tmp_path)
+    client = _multi_client(runtimes, classifier=FakeClassifier(Verdict("allow")))
+    before = runtimes["alice"].cache.cleared
+    client.post(
+        "/review/search-keywords/allow",
+        json={"entry": "homework", "profile": "alice"},
+        headers=_PIN,
+    )
+    assert runtimes["alice"].cache.cleared > before

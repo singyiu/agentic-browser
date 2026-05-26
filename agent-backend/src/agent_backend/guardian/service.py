@@ -855,6 +855,58 @@ def create_app(
     async def review_blocklist(request: Request) -> JSONResponse:
         return await _review_list(request, "blocklist")
 
+    async def _review_search_keywords(request: Request, kind: str) -> JSONResponse:
+        # Parent-facing search-keyword list management (kind = "allow" | "block"), PIN-gated.
+        # GET aggregates across every teen + Global; a write targets one profile's keyword store.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        runtimes = [*_pm.snapshot().values(), _pm.global_runtime()]
+        if request.method == "GET":
+            entries = [
+                {"value": value, "profile": rt.name}
+                for rt in runtimes
+                for value in (rt.search_allow if kind == "allow" else rt.search_block)
+                .current()
+                .values
+            ]
+            return JSONResponse({"entries": entries})
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        entry = str(body.get("entry", "")).strip()
+        if not entry or len(entry) > 512 or not entry.isprintable():
+            return JSONResponse(
+                {"error": "entry must be a non-empty, single-line string (max 512 chars)"},
+                status_code=422,
+            )
+        rt = _resolve_parent_profile(str(body.get("profile", "")).strip())
+        if rt is None:
+            return JSONResponse({"error": "profile required"}, status_code=422)
+        store = rt.search_allow if kind == "allow" else rt.search_block
+        loop = asyncio.get_running_loop()
+        try:
+            if request.method == "POST":
+                await loop.run_in_executor(None, store.add, entry)
+            else:  # DELETE
+                await loop.run_in_executor(None, store.remove, entry)
+            await _clear_caches_after_list_change(rt)
+        except OSError:
+            return JSONResponse({"error": "search-keyword write failed"}, status_code=500)
+        event_log.log(
+            f"parent_search_{kind}_{request.method.lower()}", entry=entry, profile=rt.name
+        )
+        if request.method == "POST":
+            return JSONResponse({"value": entry})
+        return JSONResponse({"ok": True})
+
+    async def review_search_allow(request: Request) -> JSONResponse:
+        return await _review_search_keywords(request, "allow")
+
+    async def review_search_block(request: Request) -> JSONResponse:
+        return await _review_search_keywords(request, "block")
+
     async def review_activity(request: Request) -> JSONResponse:
         # Read-only parent view of recent per-URL verdicts (PIN-gated). No mutation; admin/dwell
         # events are filtered out so the timeline shows only what each kid saw and how it ended.
@@ -1071,6 +1123,16 @@ def create_app(
             Route("/review/decision", review_decision, methods=["POST"]),
             Route("/review/whitelist", review_whitelist, methods=["GET", "POST", "DELETE"]),
             Route("/review/blocklist", review_blocklist, methods=["GET", "POST", "DELETE"]),
+            Route(
+                "/review/search-keywords/allow",
+                review_search_allow,
+                methods=["GET", "POST", "DELETE"],
+            ),
+            Route(
+                "/review/search-keywords/block",
+                review_search_block,
+                methods=["GET", "POST", "DELETE"],
+            ),
             Route("/review/activity", review_activity, methods=["GET"]),
             Route("/review/prompt", review_prompt, methods=["GET", "POST"]),
             Route("/settings/pin", settings_change_pin, methods=["POST"]),
