@@ -35,9 +35,9 @@ function RequestRow({ req, expanded, onExpand, onApprove, onReject }) {
     >
       <div style={{ padding: '22px 26px', display: 'grid', gridTemplateColumns: '1fr auto', gap: 22, alignItems: 'center' }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
             <span className="pill pill-pending"><span className="dot"></span>Pending</span>
-            <span style={{ fontSize: 13, color: 'var(--fg-2)' }}>
+            <span style={{ fontSize: 13, color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>
               from <strong style={{ color: 'var(--fg-1)' }}>{req.teen}</strong>
             </span>
           </div>

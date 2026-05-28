@@ -120,9 +120,9 @@ No bluish-purple anywhere. No #FFFFFF — use cream. No #000000 — use cocoa.
 
 ### Type
 
-- **Display & headings:** *Instrument Serif* (Google Fonts) — italicizable serif with real warmth and one optical size. Used italic for headlines, roman for everything else.
-- **Body & UI:** *Manrope* (Google Fonts) — geometric humanist sans with soft terminals. Pairs with a serif without competing.
-- **Mono:** *JetBrains Mono* (Google Fonts) — for `curl` snippets, token previews, file paths.
+- **Display & headings:** *Source Serif 4* (Google Fonts) — a contemporary book serif with optical sizing. Reads like Tiempos / Copernicus — the family used on claude.ai's marketing pages.
+- **Body & UI:** *Geist* (Google Fonts) — Vercel's geometric grotesk, adjacent to Söhne / Styrene B. The sibling Geist Mono is used for code.
+- **Mono:** *Geist Mono* (Google Fonts) — for `curl` snippets, token previews, file paths.
 
 Headings are *generous* (40–72px on the parent UI). Body is **16px** minimum. Line-height stays 1.5+ for body so it reads like prose, not a form.
 
@@ -200,6 +200,18 @@ Icons are used **sparingly**: one per row in the review queue (status), one inli
 
 **No emoji.** Not in product copy, not in error messages, not in empty states. The single illustrative element is the **shield mark** (in `assets/aegis-shield.svg`) and it is *the* logo — not decoration to be sprinkled around.
 
+### Browser & extension icons
+
+PNG renders of the shield mark, ready to drop into the Chrome extension manifest and the web UIs:
+
+- `assets/icons/icon-16.png` · `icon-32.png` — browser tab favicons (small sizes are borderless terracotta shields so they read at 1× resolution).
+- `assets/icons/icon-48.png` · `icon-128.png` — Chrome extension toolbar + store icons (rounded cream tile background).
+- `assets/icons/icon-180.png` — Apple touch icon.
+- `assets/icons/icon-192.png` · `icon-256.png` · `icon-512.png` — PWA / OG fallbacks.
+- `assets/icons/manifest-snippet.json` — copy-pasteable `icons` block for the extension's `manifest.json`.
+
+The three UI-kit `index.html` files already wire the favicons. To regenerate the PNGs after a logo change, the source is `assets/aegis-shield.svg` — re-render at the sizes above against a rounded-cream tile (radius ≈ 22% of size) starting from size 48.
+
 **Unicode used as iconography** only for: the round bullet `•` in meta separators, the en-dash `–` in ranges, the em-dash `—` in prose, arrow `→` on "next" links.
 
 > ⚠️ Substitution flag: Lucide is being used as a stand-in until the codebase's own icon assets are attached. If Aegis ships its own SVG sprite, swap it in here.
@@ -215,6 +227,7 @@ Icons are used **sparingly**: one per row in the review queue (status), one inli
 | `colors_and_type.css` | All design tokens — color, type, spacing, radius, shadow, motion |
 | `fonts/` | Webfont files (currently Google Fonts CDN — see substitution note) |
 | `assets/` | Logo, shield mark, paper texture, generic illustration placeholders |
+| `assets/icons/` | Browser favicon + Chrome extension icons (16 → 512) + `manifest-snippet.json` |
 | `preview/` | Cards rendered into the Design System tab |
 | `ui_kits/parent-review/` | Parent's `/review` queue + decision flow |
 | `ui_kits/kid-block-page/` | The blocked-page experience the kid sees in-browser |
@@ -222,7 +235,7 @@ Icons are used **sparingly**: one per row in the review queue (status), one inli
 
 ## Font substitution note
 
-No font files were provided. The current stack pulls **Instrument Serif**, **Manrope**, and **JetBrains Mono** from Google Fonts. If Aegis has a licensed display face we should use instead, drop the files into `fonts/` and I'll re-wire `colors_and_type.css` to load them locally.
+Fonts are pulled from Google Fonts — **Source Serif 4** (display), **Geist** (body / UI), and **Geist Mono** (code). All three are free and OFL-licensed. The pairing is tuned to feel adjacent to claude.ai (Tiempos / Söhne) while remaining publicly available. If Aegis ever licenses the real claude.ai families, drop the `.woff2` files into `fonts/` and I'll rewire `colors_and_type.css` to load them locally.
 
 ## Caveats
 

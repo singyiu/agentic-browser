@@ -27,7 +27,7 @@ Always copy the brand assets you need (`assets/aegis-shield.svg` etc.) into the 
 ## Visual non-negotiables
 
 - **Color:** cream `oklch(0.972 0.012 80)` page, cocoa `oklch(0.28 0.025 50)` text, terracotta `oklch(0.66 0.14 38)` primary action. No `#FFFFFF`, no `#000000`, no bluish-purple gradients.
-- **Type:** Instrument Serif (italic for display, roman for headings) + Manrope (body / UI) + JetBrains Mono (code). All from Google Fonts.
+- **Type:** Source Serif 4 (display, claude.ai-adjacent) + Geist (body / UI) + Geist Mono (code). All from Google Fonts.
 - **Radius:** 20px on cards, 12px on buttons/inputs, 999px on pills.
 - **Motion:** 160 / 220 / 320ms, `cubic-bezier(0.2, 0.7, 0.2, 1)`. No springs. No bounces.
 - **No emoji.** The shield mark is the only ornament.

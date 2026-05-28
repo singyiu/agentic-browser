@@ -3,7 +3,7 @@
    Warm, earthy, rounded. Paper not glass. Shield not cage.
    ========================================================================= */
 
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap');
 
 :root {
   /* ----- COLOR — neutrals (cream → cocoa) ----- */
@@ -50,23 +50,25 @@
   --link:        var(--aegis-terracotta);
   --link-hover:  var(--aegis-terracotta-2);
 
-  /* ----- TYPE — families ----- */
-  --font-display: 'Instrument Serif', 'Iowan Old Style', 'Georgia', serif;
-  --font-sans:    'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* ----- TYPE — families -----
+     Tuned to feel adjacent to claude.ai: a warm book serif for display,
+     a geometric grotesk for UI, a sibling mono. All free on Google Fonts. */
+  --font-display: 'Source Serif 4', 'Tiempos Text', 'Iowan Old Style', 'Georgia', serif;
+  --font-sans:    'Geist', 'Söhne', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:    'Geist Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
-  /* ----- TYPE — sizes (modular, soft) ----- */
-  --size-xs:   12px;
-  --size-sm:   14px;
-  --size-base: 16px;
-  --size-md:   18px;
-  --size-lg:   20px;
-  --size-xl:   24px;
-  --size-2xl:  30px;
-  --size-3xl:  38px;
-  --size-4xl:  48px;
-  --size-5xl:  64px;
-  --size-6xl:  84px;
+  /* ----- TYPE — sizes (modular, soft; bumped +10% from the original scale) ----- */
+  --size-xs:   13px;   /* 12 */
+  --size-sm:   15px;   /* 14 */
+  --size-base: 18px;   /* 16 */
+  --size-md:   20px;   /* 18 */
+  --size-lg:   22px;   /* 20 */
+  --size-xl:   26px;   /* 24 */
+  --size-2xl:  33px;   /* 30 */
+  --size-3xl:  42px;   /* 38 */
+  --size-4xl:  53px;   /* 48 */
+  --size-5xl:  70px;   /* 64 */
+  --size-6xl:  92px;   /* 84 */
 
   /* ----- TYPE — weights / leading / tracking ----- */
   --weight-regular:  400;
@@ -141,7 +143,7 @@ html, body {
 
 h1, h2, h3, h4 {
   font-family: var(--font-display);
-  font-weight: var(--weight-regular);
+  font-weight: var(--weight-medium);
   color: var(--fg-1);
   line-height: var(--lh-tight);
   letter-spacing: var(--track-snug);
@@ -157,8 +159,9 @@ h4 { font-size: var(--size-xl); font-family: var(--font-sans); font-weight: var(
 .display {
   font-family: var(--font-display);
   font-style: italic;
+  font-weight: 500;
   font-size: var(--size-6xl);
-  line-height: 0.95;
+  line-height: 0.98;
   letter-spacing: var(--track-tight);
 }
 

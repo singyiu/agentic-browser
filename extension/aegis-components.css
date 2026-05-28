@@ -11,7 +11,7 @@
 /* ----- Headings (display serif; app-appropriate sizes) ----- */
 h1, h2, h3 {
   font-family: var(--font-display);
-  font-weight: var(--weight-regular);
+  font-weight: var(--weight-medium);
   color: var(--fg-1);
   line-height: var(--lh-tight);
   letter-spacing: var(--track-snug);

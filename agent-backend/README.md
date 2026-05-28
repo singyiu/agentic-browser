@@ -184,7 +184,7 @@ The home dashboard's collapsible sidebar adds three **guardian-only** files (not
 extension): `aegis-shell.css` (app-shell layout), `shell.js` (the unlock gate, hash router, and the
 Dashboard / Requests / Activity / Guard / Settings sections), and `profiles.js` (the Profiles section).
 
-Fonts (Manrope, Instrument Serif, JetBrains Mono) are **self-hosted** under each `fonts/` dir — no
+Fonts (Geist, Source Serif 4, Geist Mono) are **self-hosted** under each `fonts/` dir — no
 Google Fonts or other third-party calls, so the pages render fully offline. The canonical token source
 is `aegis-design-system/colors_and_type.css` at the repo root; if you edit tokens there, copy the two
 `aegis-*.css` files into both locations to keep them in sync.

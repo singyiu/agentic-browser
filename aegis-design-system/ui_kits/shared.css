@@ -68,6 +68,107 @@ html, body { margin: 0; padding: 0; }
 .field label { font-size: 14px; font-weight: 600; color: var(--fg-1); }
 .field .hint { font-size: 13px; color: var(--fg-2); }
 
+/* ----- DROPDOWN -----
+   Tall, generous trigger — default height is doubled (~96px)
+   so the dropdown reads as a card-style selector rather than a thin row. */
+:root {
+  --dropdown-h: 96px; /* 2 × input height */
+}
+.dropdown {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+.dropdown-trigger {
+  width: 100%;
+  height: var(--dropdown-h);
+  padding: 16px 18px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  color: var(--fg-1);
+  text-align: left;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.dropdown-trigger:hover { background: var(--bg-3); }
+.dropdown-trigger[aria-expanded="true"] {
+  border-color: var(--aegis-terracotta);
+  box-shadow: 0 0 0 4px var(--aegis-terracotta-soft);
+}
+.dropdown-trigger .trigger-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  margin-bottom: 4px;
+  display: block;
+}
+.dropdown-trigger .trigger-value {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--fg-1);
+  line-height: 1.2;
+  display: block;
+}
+.dropdown-caret {
+  flex-shrink: 0;
+  color: var(--fg-2);
+  transition: transform var(--dur-med) var(--ease-out);
+}
+.dropdown-trigger[aria-expanded="true"] .dropdown-caret { transform: rotate(180deg); }
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lifted);
+  padding: 8px;
+  z-index: 20;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.dropdown-item {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  color: var(--fg-1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transition: background var(--dur-fast) var(--ease-out);
+  white-space: nowrap;
+}
+.dropdown-item > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.dropdown-item:hover { background: var(--bg-3); }
+.dropdown-item[aria-selected="true"] {
+  background: var(--aegis-terracotta-soft);
+  color: var(--aegis-terracotta-3);
+  font-weight: 600;
+}
+.dropdown-item .item-meta {
+  font-size: 12px;
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+}
+
 /* ----- PILLS / BADGES ----- */
 .pill {
   font-family: var(--font-sans);
@@ -115,9 +216,11 @@ html, body { margin: 0; padding: 0; }
   display: flex;
   gap: 10px;
   align-items: center;
+  flex-wrap: wrap;
   font-size: 13px;
   color: var(--fg-2);
 }
+.meta-row > * { white-space: nowrap; }
 .meta-row .sep { width: 3px; height: 3px; border-radius: 999px; background: var(--fg-2); opacity: 0.5; }
 
 /* ----- BRAND ----- */
