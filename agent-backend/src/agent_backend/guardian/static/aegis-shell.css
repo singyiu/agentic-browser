@@ -361,6 +361,15 @@
 #sec-activity .recent-row:focus-within {
   background: var(--bg-2);
 }
+/* "N events" hint on a row that stands in for a collapsed same-URL burst. */
+#sec-activity .act-count {
+  font-size: var(--size-sm);
+  white-space: nowrap;
+  opacity: 0.75;
+}
+#sec-activity .act-count::before {
+  content: "· "; /* decorative separator from the timestamp */
+}
 #sec-activity .add-rule {
   margin-left: auto; /* push to the far right of the row */
   font-size: var(--size-sm);

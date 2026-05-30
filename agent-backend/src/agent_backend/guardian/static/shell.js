@@ -24,6 +24,9 @@
   // load, AR is null and the Activity page stays read-only — the +Rule / Suggest-rules affordances
   // simply don't appear, the rest of the dashboard is unaffected.
   const AR = window.AegisRules || null;
+  // Collapses a same-URL burst (escalate -> checking, then the terminal allow/block) into one
+  // row, display-only. Absent -> the raw, un-collapsed feed renders (graceful degrade).
+  const AA = window.AegisActivity || null;
   let _openRuleBuilder = null; // the single inline builder currently expanded (one open at a time)
   let _openRuleTrigger = null; // the button that opened it, so its aria-expanded resets on close
   let _ruleBuilderSeq = 0; // unique radio-group names so multiple builders never collide
@@ -859,6 +862,18 @@
         : null,
       link,
       el("span", { class: "muted", text: timeAgo(ev.ts) }),
+      // When this row stands in for a collapsed same-URL burst, say so (transparency: the parent
+      // sees fewer rows than raw events). Singletons (_count 1 / undefined) show nothing.
+      ev._count > 1
+        ? el("span", {
+            class: "muted act-count",
+            text: ev._count + " events",
+            title:
+              ev._count + " activity events around this time merged into one",
+            "aria-label":
+              ev._count + " activity events around this time merged into one",
+          })
+        : null,
     );
     // Without rules.js the page stays read-only (graceful degrade — no +Rule affordance).
     if (!AR) return row;
@@ -1204,7 +1219,10 @@
       return;
     }
     const events = (await r.json()).events || [];
-    $("act-list").replaceChildren(...events.map(activityRow));
+    // Collapse same-URL bursts (checking -> allowed/blocked) into one row each; the raw audit
+    // log is untouched. Without activity.js the un-collapsed feed renders unchanged.
+    const rows = AA ? AA.consolidate(events) : events;
+    $("act-list").replaceChildren(...rows.map(activityRow));
     $("act-empty").hidden = events.length > 0;
   }
 
