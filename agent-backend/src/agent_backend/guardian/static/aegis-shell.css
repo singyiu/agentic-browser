@@ -361,6 +361,22 @@
 #sec-activity .recent-row:focus-within {
   background: var(--bg-2);
 }
+/* Keep each activity row on one line: the URL is the only flex item allowed to shrink, and it
+   truncates with an ellipsis instead of wrapping. The shared .url uses word-break:break-all,
+   which balloons long OAuth-style URLs into dozens of lines. The <a> href + title still carry
+   the full URL, so nothing is lost — only the on-screen text is clipped. */
+#sec-activity .recent-row .url {
+  min-width: 0; /* let the flex item shrink below its content width so the ellipsis can engage */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal; /* cancel the shared break-all; we clip rather than wrap */
+}
+#sec-activity .recent-row .badge,
+#sec-activity .recent-row .muted,
+#sec-activity .recent-row .add-rule {
+  flex-shrink: 0; /* only the URL gives; badges, timestamp and +Rule keep their natural size */
+}
 /* "N events" hint on a row that stands in for a collapsed same-URL burst. */
 #sec-activity .act-count {
   font-size: var(--size-sm);

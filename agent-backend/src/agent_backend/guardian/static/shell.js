@@ -985,9 +985,10 @@
           target: "_blank",
           rel: "noopener noreferrer",
           class: "url",
+          title: target, // full URL on hover; the visible text is clipped with an ellipsis
           text: target,
         })
-      : el("span", { class: "url", text: target });
+      : el("span", { class: "url", title: target, text: target });
     const row = el(
       "div",
       { class: "recent-row" },
