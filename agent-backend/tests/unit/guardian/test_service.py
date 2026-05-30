@@ -2821,3 +2821,41 @@ def test_review_time_usage_lists_profiles(tmp_path: Path) -> None:
     assert alice["has_policy"] is True
     assert alice["general"]["limit_ms"] == 100 * 60_000
     assert alice["general"]["used_ms"] == 30_000
+
+
+# --- self-hosted extension distribution (/ext/updates.xml, /ext/aegis.crx) ---
+
+
+def _ext_client(tmp_path: Path) -> TestClient:
+    app = create_app(
+        replace(_config(), ext_dist_dir=str(tmp_path)),
+        classifier=FakeClassifier(Verdict("allow")),
+        cache=FakeCache(),
+        event_log=FakeLog(),
+    )
+    return TestClient(app)
+
+
+def test_ext_updates_404_when_not_packed(tmp_path: Path) -> None:
+    assert _ext_client(tmp_path).get("/ext/updates.xml").status_code == 404
+
+
+def test_ext_crx_404_when_not_packed(tmp_path: Path) -> None:
+    assert _ext_client(tmp_path).get("/ext/aegis.crx").status_code == 404
+
+
+def test_ext_updates_served_without_token(tmp_path: Path) -> None:
+    (tmp_path / "updates.xml").write_text("<gupdate><app appid='x'/></gupdate>")
+    # No X-Guardian-Token header: Chrome's updater can't send one.
+    resp = _ext_client(tmp_path).get("/ext/updates.xml")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/xml")
+    assert "gupdate" in resp.text
+
+
+def test_ext_crx_served_without_token(tmp_path: Path) -> None:
+    (tmp_path / "aegis.crx").write_bytes(b"Cr24\x03\x00\x00\x00payload")
+    resp = _ext_client(tmp_path).get("/ext/aegis.crx")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/x-chrome-extension")
+    assert resp.content.startswith(b"Cr24")

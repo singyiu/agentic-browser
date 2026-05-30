@@ -2060,6 +2060,24 @@ def create_app(
         event_log.log("profile_deleted", profile=name, purged=purge)
         return JSONResponse({"ok": True})
 
+    # --- self-hosted extension distribution (force-install via enterprise policy) ---
+    # The kid browser's managed policy force-installs the parental-control extension from
+    # these two routes. They are UNAUTHENTICATED on purpose: Chrome's extension updater
+    # cannot present the X-Guardian-Token (same rationale as /static and /health). Both
+    # serve fixed filenames from a configured dir — no path params, so no traversal risk —
+    # and 404 until scripts/pack-extension.sh has produced the artifacts.
+    def _ext_artifact(filename: str, media_type: str) -> Response:
+        path = Path(config.ext_dist_dir) / filename
+        if not path.is_file():
+            return Response("extension not packed", status_code=404, media_type="text/plain")
+        return FileResponse(path, media_type=media_type)
+
+    async def ext_updates(_request: Request) -> Response:
+        return _ext_artifact("updates.xml", "text/xml")
+
+    async def ext_crx(_request: Request) -> Response:
+        return _ext_artifact("aegis.crx", "application/x-chrome-extension")
+
     app = Starlette(
         routes=[
             Route("/", home_page, methods=["GET"]),
@@ -2128,6 +2146,9 @@ def create_app(
             Route("/profiles/{name}/rename", profile_rename, methods=["POST"]),
             Route("/profiles/{name}/token", profile_regenerate_token, methods=["POST"]),
             Route("/profiles/{name}", profile_delete, methods=["DELETE"]),
+            # Self-hosted extension force-install endpoints (unauthenticated; see handlers).
+            Route("/ext/updates.xml", ext_updates, methods=["GET"]),
+            Route("/ext/aegis.crx", ext_crx, methods=["GET"]),
             # Shared design-system assets (tokens, component CSS, self-hosted fonts, brand
             # SVG) for the served pages. No auth — purely static, public styling like the
             # page shells themselves. The /static prefix never shadows the exact routes above.
