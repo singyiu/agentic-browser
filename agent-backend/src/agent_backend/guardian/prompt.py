@@ -83,6 +83,24 @@ class PromptStore:
             self._mtime = self._stat_mtime()
             self._current = text
 
+    def append(self, text: str, *, separator: str, max_chars: int) -> bool:
+        """Append ``separator + text`` atomically, keeping the total <= ``max_chars``.
+
+        Returns ``True`` when appended, ``False`` when there is no room (the caller reports the
+        skip). The cap is enforced inside the lock so concurrent appends can never push the blob
+        past ``max_chars``. Never truncates — a clipped household rule could invert its meaning
+        ("block X but allow Y" -> "block X") — so an over-long append is dropped whole.
+        """
+        with self._lock:
+            current = self._read()
+            candidate = (current + separator + text) if current else text
+            if len(candidate) > max_chars:
+                return False
+            self._write(candidate)
+            self._mtime = self._stat_mtime()
+            self._current = candidate
+            return True
+
 
 def default_global_prompt() -> str:
     """Default Global guidance: empty. Households opt in by writing their own."""

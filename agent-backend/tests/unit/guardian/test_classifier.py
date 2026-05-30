@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 from agent_backend.guardian.classifier import Classifier
@@ -263,3 +264,46 @@ async def test_search_system_prompt_has_age_and_policy(tmp_path: Path) -> None:
     assert "HOUSEHOLD: be strict." in system_prompt
     assert '{"verdict":"allow"|"block"' in system_prompt  # JSON braces survive substitution
     assert captured["prompt"] == "Search query: minecraft"
+
+
+# --- generate (one-shot prose, e.g. a suggested blocking rule) --------------
+
+
+async def test_generate_collects_text(tmp_path: Path) -> None:
+    async def fake_query(*, prompt: str, options: object) -> AsyncIterator[object]:
+        yield _assistant("Block websites showing pornographic material.")
+        yield _result()
+
+    out = await Classifier(_config(tmp_path), query_fn=fake_query).generate(
+        system_prompt="sys", user_prompt="user"
+    )
+    assert out == "Block websites showing pornographic material."
+
+
+async def test_generate_passes_system_and_user_prompt(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_query(*, prompt: str, options: object) -> AsyncIterator[object]:
+        captured["system_prompt"] = options.system_prompt  # type: ignore[attr-defined]
+        captured["prompt"] = prompt
+        yield _assistant("ok")
+        yield _result()
+
+    await Classifier(_config(tmp_path), query_fn=fake_query).generate(
+        system_prompt="SYSTEM-X", user_prompt="USER-Y"
+    )
+    assert captured["system_prompt"] == "SYSTEM-X"
+    assert captured["prompt"] == "USER-Y"
+
+
+async def test_generate_propagates_errors(tmp_path: Path) -> None:
+    # Unlike classify (which fails open), generate surfaces transport errors so the
+    # caller can decide; the suggest endpoint turns this into a 502.
+    async def boom(*, prompt: str, options: object) -> AsyncIterator[object]:
+        raise RuntimeError("transport boom")
+        yield  # pragma: no cover - makes this an async generator
+
+    with pytest.raises(RuntimeError):
+        await Classifier(_config(tmp_path), query_fn=boom).generate(
+            system_prompt="s", user_prompt="u"
+        )

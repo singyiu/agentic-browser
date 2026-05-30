@@ -161,6 +161,14 @@ class Classifier:
                         collected = message.result
         return collected
 
+    async def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+        """Run one stateless prose generation (no rubric/policy/topic injection).
+
+        Returns the collected text. Unlike ``classify`` this does NOT fail open: transport errors
+        propagate so the caller (the suggest-block-rule endpoint) can surface them as a 502.
+        """
+        return await self._run(user_prompt, self._base_options(system_prompt))
+
     async def classify(
         self,
         payload: dict[str, str],

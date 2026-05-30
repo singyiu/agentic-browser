@@ -52,6 +52,65 @@ def test_prompt_store_mtime_none_until_written(tmp_path: Path) -> None:
     assert store.mtime is not None
 
 
+# --- PromptStore.append (atomic read-modify-write, cap enforced in-lock) ------
+
+
+def test_prompt_store_append_to_empty_sets_text(tmp_path: Path) -> None:
+    store = PromptStore(str(tmp_path / "p.txt"))
+    assert store.append("first rule", separator="\n\n", max_chars=4000) is True
+    assert store.current() == "first rule"
+
+
+def test_prompt_store_append_to_existing_joins_with_separator(tmp_path: Path) -> None:
+    store = PromptStore(str(tmp_path / "p.txt"))
+    store.set("first rule")
+    assert store.append("second rule", separator="\n\n", max_chars=4000) is True
+    assert store.current() == "first rule\n\nsecond rule"
+
+
+def test_prompt_store_append_persists_to_disk(tmp_path: Path) -> None:
+    path = tmp_path / "p.txt"
+    PromptStore(str(path)).append("rule body", separator="\n\n", max_chars=4000)
+    assert path.read_text(encoding="utf-8") == "rule body"
+
+
+def test_prompt_store_append_skips_when_over_max_chars(tmp_path: Path) -> None:
+    # 3990 + len("\n\n") + 20 = 4012 > 4000: no room, skip without truncating.
+    store = PromptStore(str(tmp_path / "p.txt"))
+    store.set("x" * 3990)
+    assert store.append("y" * 20, separator="\n\n", max_chars=4000) is False
+    assert store.current() == "x" * 3990
+
+
+def test_prompt_store_append_current_reflects_without_reload(tmp_path: Path) -> None:
+    store = PromptStore(str(tmp_path / "p.txt"))
+    store.append("a", separator="\n\n", max_chars=4000)
+    assert store.current() == "a"  # no explicit reload_if_changed() needed
+
+
+def test_prompt_store_append_is_atomic_under_concurrency(tmp_path: Path) -> None:
+    import threading
+
+    store = PromptStore(str(tmp_path / "p.txt"))
+    store.set("base")
+    barrier = threading.Barrier(5)
+
+    def worker(i: int) -> None:
+        barrier.wait()  # maximise contention on the read-modify-write
+        store.append(f"rule{i}", separator="\n\n", max_chars=4000)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    final = store.current()
+    assert final == store._read()  # in-memory matches disk
+    for i in range(5):
+        assert f"rule{i}" in final  # no append lost to a race
+
+
 # --- defaults ----------------------------------------------------------------
 
 
