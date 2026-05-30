@@ -14,6 +14,7 @@ from agent_backend.guardian.access_requests import RequestStore
 from agent_backend.guardian.blocklist import BlocklistStore
 from agent_backend.guardian.cache import CacheEntry
 from agent_backend.guardian.config import GuardianConfig
+from agent_backend.guardian.event_log import EventLog
 from agent_backend.guardian.keyword_store import KeywordStore
 from agent_backend.guardian.profile_manager import ProfileManager
 from agent_backend.guardian.profiles import load_profiles
@@ -25,6 +26,9 @@ from agent_backend.guardian.service import (
     _summary_is_stale,
     create_app,
 )
+from agent_backend.guardian.time_ledger import TimeLedger
+from agent_backend.guardian.time_policy import TimePolicyStore
+from agent_backend.guardian.time_requests import TimeRequestStore
 from agent_backend.guardian.verdict import Verdict
 from agent_backend.guardian.whitelist import Whitelist, WhitelistStore
 
@@ -1520,6 +1524,8 @@ def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
             prompt_store=PromptStore(str(tmp_path / "alice_prompt.txt")),
             search_allow=KeywordStore(str(tmp_path / "alice_sa.json")),
             search_block=KeywordStore(str(tmp_path / "alice_sb.json")),
+            time_policy=TimePolicyStore(str(tmp_path / "alice_tp.json")),
+            time_request_store=TimeRequestStore(str(tmp_path / "alice_treq.json")),
             age=12,
         ),
         "bob": ProfileRuntime(
@@ -1532,6 +1538,8 @@ def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
             prompt_store=PromptStore(str(tmp_path / "bob_prompt.txt")),
             search_allow=KeywordStore(str(tmp_path / "bob_sa.json")),
             search_block=KeywordStore(str(tmp_path / "bob_sb.json")),
+            time_policy=TimePolicyStore(str(tmp_path / "bob_tp.json")),
+            time_request_store=TimeRequestStore(str(tmp_path / "bob_treq.json")),
             age=10,
         ),
     }
@@ -2639,3 +2647,177 @@ def test_activity_summary_post_drops_global_from_output() -> None:
     names = [p["profile"] for p in body["profiles"]]
     assert "Hei" in names
     assert "global" not in names
+
+
+# --- screen-time management endpoints ---
+
+_ALICE = {"X-Guardian-Token": "tok-alice"}
+
+
+def _time_client(tmp_path: Path, classifier: object | None = None) -> TestClient:
+    """Multi-profile app (alice/bob) with a UTC-pinned, log-backed ledger for determinism."""
+    runtimes = _two_profiles(tmp_path)
+    log = EventLog(str(tmp_path / "events.jsonl"))
+    ledger = TimeLedger(log, tz="UTC")
+    app = create_app(
+        _config(),
+        classifier=classifier or FakeClassifier(Verdict("allow")),
+        event_log=log,
+        runtimes=runtimes,
+        time_ledger=ledger,
+    )
+    return TestClient(app)
+
+
+def test_time_state_requires_token(tmp_path: Path) -> None:
+    assert _time_client(tmp_path).get("/time/state").status_code == 403
+
+
+def test_time_state_unset_policy_is_unlimited(tmp_path: Path) -> None:
+    body = _time_client(tmp_path).get("/time/state?url=https://a.com/", headers=_ALICE).json()
+    assert body["blocked"] is False
+    assert body["general"]["limit_ms"] is None
+
+
+def test_time_policy_get_put_requires_pin(tmp_path: Path) -> None:
+    client = _time_client(tmp_path)
+    assert client.get("/time/policy?profile=alice").status_code == 403
+    assert client.put("/time/policy?profile=alice", json={}).status_code == 403
+
+
+def test_time_policy_put_then_get(tmp_path: Path) -> None:
+    client = _time_client(tmp_path)
+    r = client.put(
+        "/time/policy?profile=alice",
+        headers=_PIN,
+        json={"daily_minutes": {"default": 90}, "source_text": "ninety"},
+    )
+    assert r.status_code == 200
+    got = client.get("/time/policy?profile=alice", headers=_PIN).json()
+    assert got["policy"]["daily_minutes"] == {"default": 90}
+    assert got["policy"]["source_text"] == "ninety"
+
+
+def test_time_policy_unknown_profile_404(tmp_path: Path) -> None:
+    assert (
+        _time_client(tmp_path).get("/time/policy?profile=nobody", headers=_PIN).status_code == 404
+    )
+
+
+def test_time_policy_global_fallback_in_effective(tmp_path: Path) -> None:
+    client = _time_client(tmp_path)
+    client.put("/time/policy?profile=global", headers=_PIN, json={"daily_minutes": {"default": 45}})
+    got = client.get("/time/policy?profile=alice", headers=_PIN).json()
+    assert got["policy"]["daily_minutes"] == {}  # alice has none of her own
+    assert got["effective"]["daily_minutes"] == {"default": 45}  # inherited from Global
+
+
+def test_dwell_accumulates_and_blocks(tmp_path: Path) -> None:
+    client = _time_client(tmp_path)
+    client.put("/time/policy?profile=alice", headers=_PIN, json={"daily_minutes": {"default": 1}})
+    resp = client.post(
+        "/dwell", headers=_ALICE, json={"url_key": "https://a.com/", "dwell_ms": 70_000}
+    ).json()
+    assert resp["ok"] is True
+    assert resp["blocked"] is True
+    assert resp["general"]["blocked"] is True
+    state = client.get("/time/state?url=https://a.com/", headers=_ALICE).json()
+    assert state["blocked"] is True
+
+
+def test_excluded_site_stays_usable_after_general_block(tmp_path: Path) -> None:
+    client = _time_client(tmp_path)
+    client.put(
+        "/time/policy?profile=alice",
+        headers=_PIN,
+        json={
+            "daily_minutes": {"default": 1},
+            "sites": [{"host": "khanacademy.org", "excluded": True}],
+        },
+    )
+    client.post("/dwell", headers=_ALICE, json={"url_key": "https://a.com/", "dwell_ms": 70_000})
+    khan = client.get("/time/state?url=https://www.khanacademy.org/math", headers=_ALICE).json()
+    assert khan["site"]["excluded"] is True
+    assert khan["blocked"] is False
+
+
+def test_time_request_submit_review_and_grant_unblocks(tmp_path: Path) -> None:
+    client = _time_client(tmp_path)
+    client.put("/time/policy?profile=alice", headers=_PIN, json={"daily_minutes": {"default": 1}})
+    client.post("/dwell", headers=_ALICE, json={"url_key": "https://a.com/", "dwell_ms": 70_000})
+    # kid asks for more time
+    submitted = client.post(
+        "/time-request", headers=_ALICE, json={"reason": "homework", "requested_minutes": 30}
+    ).json()
+    assert submitted["status"] == "pending"
+    # parent sees it
+    pending = client.get("/review/time-requests", headers=_PIN).json()["pending"]
+    assert any(p["id"] == submitted["id"] and p["profile"] == "alice" for p in pending)
+    # parent grants 5 minutes
+    decided = client.post(
+        "/review/time-decision",
+        headers=_PIN,
+        json={
+            "id": submitted["id"],
+            "profile": "alice",
+            "decision": "approve",
+            "granted_minutes": 5,
+        },
+    ).json()
+    assert decided["status"] == "approved" and decided["granted_minutes"] == 5
+    # the grant raised today's budget -> no longer blocked
+    state = client.get("/time/state?url=https://a.com/", headers=_ALICE).json()
+    assert state["blocked"] is False
+
+
+def test_time_request_requires_token(tmp_path: Path) -> None:
+    assert _time_client(tmp_path).post("/time-request", json={"reason": "x"}).status_code == 403
+
+
+def test_review_time_decision_requires_pin(tmp_path: Path) -> None:
+    r = _time_client(tmp_path).post(
+        "/review/time-decision", json={"id": "treq_x", "profile": "alice", "decision": "approve"}
+    )
+    assert r.status_code == 403
+
+
+def test_review_time_decision_approve_requires_minutes(tmp_path: Path) -> None:
+    client = _time_client(tmp_path)
+    sub = client.post("/time-request", headers=_ALICE, json={"reason": "r"}).json()
+    r = client.post(
+        "/review/time-decision",
+        headers=_PIN,
+        json={"id": sub["id"], "profile": "alice", "decision": "approve"},
+    )
+    assert r.status_code == 422  # approve needs a positive granted_minutes
+
+
+def test_time_policy_parse_uses_classifier(tmp_path: Path) -> None:
+    fake = FakeClassifier(
+        Verdict("allow"), rule_result=json.dumps({"daily_minutes": {"default": 120}})
+    )
+    client = _time_client(tmp_path, classifier=fake)
+    body = client.post(
+        "/time/policy/parse", headers=_PIN, json={"profile": "alice", "text": "2 hours a day"}
+    ).json()
+    assert body["policy"]["daily_minutes"] == {"default": 120}
+    assert fake.generate_calls == 1
+    assert "JSON" in fake.generate_system_prompt
+
+
+def test_time_policy_parse_classifier_error_502(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("allow"), rule_result=RuntimeError("boom"))
+    client = _time_client(tmp_path, classifier=fake)
+    r = client.post("/time/policy/parse", headers=_PIN, json={"profile": "alice", "text": "hi"})
+    assert r.status_code == 502
+
+
+def test_review_time_usage_lists_profiles(tmp_path: Path) -> None:
+    client = _time_client(tmp_path)
+    client.put("/time/policy?profile=alice", headers=_PIN, json={"daily_minutes": {"default": 100}})
+    client.post("/dwell", headers=_ALICE, json={"url_key": "https://a.com/", "dwell_ms": 30_000})
+    body = client.get("/review/time/usage", headers=_PIN).json()
+    alice = next(p for p in body["profiles"] if p["profile"] == "alice")
+    assert alice["has_policy"] is True
+    assert alice["general"]["limit_ms"] == 100 * 60_000
+    assert alice["general"]["used_ms"] == 30_000

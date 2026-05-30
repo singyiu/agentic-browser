@@ -40,8 +40,26 @@ from .profiles import DEFAULT_PROFILE_NAME, GLOBAL_PROFILE_NAME, ProfileRegistry
 from .prompt import PromptStore, default_profile_prompt
 from .runtime import ProfileRuntime, build_runtime
 from .search_classifier import classify_search_query
+from .time_ledger import TimeLedger
+from .time_policy import (
+    TimePolicy,
+    TimePolicyStore,
+)
+from .time_policy import (
+    from_stored as time_policy_from_stored,
+)
+from .time_policy import (
+    parse_policy as parse_time_policy,
+)
+from .time_policy import (
+    resolve as resolve_time_policy,
+)
+from .time_policy import (
+    to_json as time_policy_to_json,
+)
+from .time_requests import TimeRequestStore
 from .verdict import Verdict
-from .whitelist import WhitelistStore, classify_entry
+from .whitelist import WhitelistStore, canonicalize_url, classify_entry
 
 # Per-URL verdict events shown in the parent Activity view; admin/dwell events are excluded so
 # the timeline reads as "what each kid saw and how it was decided".
@@ -61,6 +79,86 @@ ACTIVITY_LIMIT_MAX = 500
 # auto-regenerates it on load; summaries review a wider window than the timeline default.
 SUMMARY_STALE_AFTER_S = 48 * 3600
 SUMMARY_LIMIT_DEFAULT = 200
+
+# Screen-time request limits + the prompt that turns a parent's natural-language limits
+# into the structured TimePolicy JSON (validated/clamped by time_policy.parse_policy).
+_MAX_TIME_TEXT = 2000
+_MAX_TIME_REASON = 500
+_MAX_REQUEST_MINUTES = 1440
+_TIME_POLICY_SYSTEM_PROMPT = (
+    "You convert a parent's natural-language screen-time rules into a strict JSON object for "
+    "a parental-control browser. Output ONLY the JSON object, no prose.\n\n"
+    "Schema:\n"
+    "{\n"
+    '  "daily_minutes": {"default": <int minutes>, "mon": <int>, ..., "sun": <int>},\n'
+    '  "windows": [{"days": ["mon", ...], "start": "HH:MM", "end": "HH:MM"}],\n'
+    '  "sites": [{"host": "example.com", "daily_minutes": <int or null>, "excluded": <bool>}]\n'
+    "}\n\n"
+    "Rules:\n"
+    '- daily_minutes: the general daily browsing budget in MINUTES. Use "default" for every '
+    "day; add per-day keys (mon..sun) only to override specific days. Omit days not mentioned.\n"
+    '- windows: bedtime / blocked hours in 24h "HH:MM". An "end" earlier than "start" '
+    'wraps past midnight (e.g. 21:00 -> 07:00). Empty "days" means every day.\n'
+    '- sites: per-site overrides. "excluded": true means time on that site does NOT count '
+    "toward the general budget and the site stays usable after the budget runs out (use for "
+    'educational/homework sites). "daily_minutes" is an optional separate cap (null = none).\n'
+    "- Use only the fields the parent mentioned; omit the rest. Minutes are 0..1440.\n"
+    "Reply with ONLY the JSON object."
+)
+
+
+def _clamp_request_minutes(value: object) -> int | None:
+    """A teen's requested-minutes ask: int in [1, 1440], else None (let the parent decide)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    n = int(value)
+    return n if 1 <= n <= _MAX_REQUEST_MINUTES else None
+
+
+def _block_reason(usage: object) -> str:
+    """A short machine hint for why the current host is blocked (or "" when it is not)."""
+    u = usage
+    if not u.blocked:  # type: ignore[attr-defined]
+        return ""
+    site = u.site  # type: ignore[attr-defined]
+    if site is not None and site.excluded:
+        return "site_limit" if site.blocked else ""
+    if u.bedtime_active:  # type: ignore[attr-defined]
+        return "bedtime"
+    if u.blocked_general:  # type: ignore[attr-defined]
+        return "time_limit"
+    if site is not None and site.blocked:
+        return "site_limit"
+    return ""
+
+
+def _usage_to_json(usage: object) -> dict[str, Any]:
+    """Serialize a :class:`time_ledger.Usage` to the time-state response envelope."""
+    u = usage
+    site = u.site  # type: ignore[attr-defined]
+    return {
+        "general": {
+            "used_ms": u.general_used_ms,  # type: ignore[attr-defined]
+            "limit_ms": u.general_limit_ms,  # type: ignore[attr-defined]
+            "remaining_ms": u.general_remaining_ms,  # type: ignore[attr-defined]
+            "blocked": u.blocked_general,  # type: ignore[attr-defined]
+        },
+        "bedtime": {"active": u.bedtime_active},  # type: ignore[attr-defined]
+        "site": (
+            None
+            if site is None
+            else {
+                "host": site.host,
+                "excluded": site.excluded,
+                "used_ms": site.used_ms,
+                "limit_ms": site.limit_ms,
+                "remaining_ms": site.remaining_ms,
+                "blocked": site.blocked,
+            }
+        ),
+        "blocked": u.blocked,  # type: ignore[attr-defined]
+        "reason": _block_reason(u),
+    }
 
 
 def _parse_activity_limit(raw: str | None) -> int:
@@ -328,6 +426,7 @@ def _build_runtimes(
             "create_app: no registry/runtimes and GUARDIAN_TOKEN is empty — nothing could "
             "authenticate. Set GUARDIAN_TOKEN or pass a registry/runtimes."
         )
+    base = Path(config.whitelist_path).expanduser().parent
     default = ProfileRuntime(
         name=DEFAULT_PROFILE_NAME,
         token=config.token,
@@ -338,6 +437,8 @@ def _build_runtimes(
         prompt_store=PromptStore(config.prompt_path),
         search_allow=KeywordStore(config.search_allow_path),
         search_block=KeywordStore(config.search_block_path),
+        time_policy=TimePolicyStore(str(base / "time_policy.json")),
+        time_request_store=TimeRequestStore(str(base / "time_requests.json")),
         age=DEFAULT_AGE,
     )
     return {default.name: default}
@@ -357,6 +458,7 @@ def create_app(
     runtimes: dict[str, ProfileRuntime] | None = None,
     pin_store: PinStore | None = None,
     manager: ProfileManager | None = None,
+    time_ledger: TimeLedger | None = None,
 ) -> Starlette:
     """Build the guardian app. Dependencies may be injected for testing.
 
@@ -368,6 +470,8 @@ def create_app(
     classifier = classifier or Classifier(config)
     event_log = event_log or EventLog(config.event_log_path)
     summary_log = summary_log or EventLog(config.summary_log_path)
+    # Screen-time accounting is event-sourced over the same event log (dwell + time_grant).
+    time_ledger = time_ledger or TimeLedger(event_log, tz=config.household_tz)
     metrics = metrics or GuardianMetrics()
     # The PIN lives in the store (hash file written by /setup), with the env PIN as fallback,
     # so a PIN created at runtime takes effect without restarting (config is frozen at startup).
@@ -666,9 +770,95 @@ def create_app(
                 {"error": "url_key and non-negative dwell_ms required"}, status_code=422
             )
         host = extract_host(url_key)
+        now = datetime.now(UTC)
+        # Account before logging: the first touch of the day seeds from the log as it stands,
+        # so counting this not-yet-logged event separately avoids a double count.
+        time_ledger.add_dwell(rt.name, host, int(dwell_ms), now)
         metrics.record_dwell(host, float(dwell_ms) / 1000.0)
         event_log.log("dwell", url_key=url_key, host=host, dwell_ms=int(dwell_ms), profile=rt.name)
-        return JSONResponse({"ok": True})
+        # Return the current time-state so the extension's heartbeat can enforce immediately.
+        return JSONResponse({"ok": True, **_time_state(rt, url_key, now)})
+
+    def _resolve_time_policy(rt: ProfileRuntime) -> TimePolicy:
+        """Effective policy for a teen: its own, with the Global profile layered under it."""
+        return resolve_time_policy(
+            rt.time_policy.current(), _pm.global_runtime().time_policy.current()
+        )
+
+    def _time_state(rt: ProfileRuntime, url: str | None, now: datetime) -> dict[str, Any]:
+        host = extract_host(url) if url else None
+        usage = time_ledger.usage(rt.name, _resolve_time_policy(rt), host, now)
+        return _usage_to_json(usage)
+
+    async def time_state_endpoint(request: Request) -> JSONResponse:
+        # Teen-facing: the extension reads its remaining credits + whether to block (token-authed).
+        rt = _resolve_runtime(request)
+        if rt is None:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        url = request.query_params.get("url", "").strip()
+        return JSONResponse(_time_state(rt, url or None, datetime.now(UTC)))
+
+    async def time_request_endpoint(request: Request) -> JSONResponse:
+        # Teen-facing: ask a parent for more time (token-authed). Granting is PIN-gated below.
+        rt = _resolve_runtime(request)
+        if rt is None:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        loop = asyncio.get_running_loop()
+
+        if request.method == "GET":
+            target = request.query_params.get("target_host", "").strip() or None
+            match = next(
+                (
+                    r
+                    for r in reversed(rt.time_request_store.current().requests)
+                    if r.target_host == target
+                ),
+                None,
+            )
+            if match is None:
+                return JSONResponse({"status": "none"})
+            return JSONResponse(
+                {
+                    "status": match.status,
+                    "id": match.id,
+                    "granted_minutes": match.granted_minutes,
+                    "decision_note": match.decision_note,
+                    "target_host": match.target_host,
+                }
+            )
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        reason = str(body.get("reason", "")).strip()
+        note = str(body.get("note", "")).strip()
+        if len(reason) > _MAX_TIME_REASON or len(note) > _MAX_TIME_REASON:
+            return JSONResponse(
+                {"error": f"reason and note must be at most {_MAX_TIME_REASON} chars"},
+                status_code=422,
+            )
+        target_raw = str(body.get("target_host", "")).strip()
+        target = canonicalize_url(target_raw).split("/", 1)[0] if target_raw else None
+        minutes = _clamp_request_minutes(body.get("requested_minutes"))
+        req = await loop.run_in_executor(
+            None,
+            functools.partial(
+                rt.time_request_store.add_request,
+                target_host=target,
+                requested_minutes=minutes,
+                reason=reason,
+                note=note,
+            ),
+        )
+        event_log.log(
+            "time_request",
+            id=req.id,
+            profile=rt.name,
+            target_host=target,
+            requested_minutes=minutes,
+        )
+        return JSONResponse({"id": req.id, "status": req.status})
 
     async def whitelist_endpoint(request: Request) -> JSONResponse:
         rt = _resolve_runtime(request)
@@ -1012,6 +1202,182 @@ def create_app(
                 "hard_block_applied": applied_hard,
             }
         )
+
+    def _time_policy_store_for(name: str) -> TimePolicyStore | None:
+        if name.lower() == GLOBAL_PROFILE_NAME:
+            return _pm.global_runtime().time_policy
+        rt = _pm.snapshot().get(name)
+        return rt.time_policy if rt is not None else None
+
+    async def review_time_requests(request: Request) -> JSONResponse:
+        # Parent-facing (PIN): pending + recently decided "more time" asks across all teens.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        pending: list[dict[str, Any]] = []
+        recent: list[dict[str, Any]] = []
+        for rt in _pm.snapshot().values():
+            snap = rt.time_request_store.current()
+            for r in snap.pending():
+                pending.append({**asdict(r), "profile": rt.name, "age": rt.age})
+            for r in snap.recent_decided():
+                recent.append({**asdict(r), "profile": rt.name})
+        pending.sort(key=lambda r: r["created_ts"])
+        recent.sort(key=lambda r: r.get("decided_ts") or "", reverse=True)
+        return JSONResponse({"pending": pending, "recent": recent[:50]})
+
+    async def review_time_decision(request: Request) -> JSONResponse:
+        # Parent-facing (PIN): grant bonus minutes (approve) or deny a time request.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        request_id = str(body.get("id", "")).strip()
+        profile = str(body.get("profile", "")).strip()
+        decision = str(body.get("decision", "")).strip()
+        if decision not in ("approve", "reject"):
+            return JSONResponse({"error": "decision must be approve|reject"}, status_code=422)
+        owner = _pm.snapshot().get(profile)
+        if owner is None:
+            return JSONResponse({"error": "unknown profile"}, status_code=404)
+        granted = _clamp_request_minutes(body.get("granted_minutes"))
+        if decision == "approve" and granted is None:
+            return JSONResponse(
+                {"error": f"granted_minutes must be an integer 1..{_MAX_REQUEST_MINUTES}"},
+                status_code=422,
+            )
+        raw_note = body.get("note")
+        note = raw_note.strip() if isinstance(raw_note, str) else None
+        loop = asyncio.get_running_loop()
+        try:
+            decided = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    owner.time_request_store.decide,
+                    request_id,
+                    decision=decision,
+                    granted_minutes=granted,
+                    decision_note=note,
+                ),
+            )
+        except KeyError:
+            return JSONResponse({"error": "request not found"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        if decision == "approve" and granted:
+            now = datetime.now(UTC)
+            # A grant extends today's general pool (event-sourced; expires at day rollover).
+            time_ledger.add_grant(owner.name, granted, now)
+            event_log.log(
+                "time_grant",
+                profile=owner.name,
+                minutes=granted,
+                target_host=decided.target_host,
+                request_id=decided.id,
+            )
+        return JSONResponse(
+            {
+                "id": decided.id,
+                "status": decided.status,
+                "granted_minutes": decided.granted_minutes,
+            }
+        )
+
+    async def time_policy_endpoint(request: Request) -> JSONResponse:
+        # Parent-facing (PIN): read / replace a profile's (or Global's) structured time policy.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        name = request.query_params.get("profile", "").strip()
+        store = _time_policy_store_for(name)
+        if store is None:
+            return JSONResponse({"error": "unknown profile"}, status_code=404)
+        is_global = name.lower() == GLOBAL_PROFILE_NAME
+        if request.method == "GET":
+            own = store.current()
+            glob = _pm.global_runtime().time_policy.current()
+            effective = own if is_global else resolve_time_policy(own, glob)
+            return JSONResponse(
+                {
+                    "profile": name,
+                    "is_global": is_global,
+                    "policy": time_policy_to_json(own),
+                    "effective": time_policy_to_json(effective),
+                }
+            )
+        # PUT: replace with the structured policy (validated + clamped), stamped server-side.
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "policy object required"}, status_code=422)
+        source = body.get("source_text")
+        if isinstance(source, str) and len(source) > _MAX_TIME_TEXT:
+            return JSONResponse({"error": "source_text too long"}, status_code=422)
+        body["updated_ts"] = datetime.now(UTC).isoformat()
+        policy = time_policy_from_stored(body)
+        loop = asyncio.get_running_loop()
+        try:
+            saved = await loop.run_in_executor(None, store.set, policy)
+        except OSError:
+            return JSONResponse({"error": "policy write failed"}, status_code=500)
+        event_log.log("time_policy_set", profile=name or DEFAULT_PROFILE_NAME)
+        return JSONResponse({"ok": True, "policy": time_policy_to_json(saved)})
+
+    async def time_policy_parse(request: Request) -> JSONResponse:
+        # Parent-facing (PIN): turn natural-language limits into a structured policy (preview only).
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        text = str(body.get("text", "")).strip()
+        if not text or len(text) > _MAX_TIME_TEXT:
+            return JSONResponse(
+                {"error": f"text required (max {_MAX_TIME_TEXT} chars)"}, status_code=422
+            )
+        try:
+            raw = await asyncio.wait_for(
+                classifier.generate(system_prompt=_TIME_POLICY_SYSTEM_PROMPT, user_prompt=text),
+                timeout=config.classify_timeout_s,
+            )
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "time policy parse failed"}, status_code=502)
+        policy = parse_time_policy(raw, source_text=text)
+        return JSONResponse({"policy": time_policy_to_json(policy)})
+
+    async def review_time_usage(request: Request) -> JSONResponse:
+        # Parent-facing (PIN): each teen's today used/remaining for the dashboard live view.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        now = datetime.now(UTC)
+        glob = _pm.global_runtime().time_policy.current()
+        out: list[dict[str, Any]] = []
+        for rt in _pm.snapshot().values():
+            policy = resolve_time_policy(rt.time_policy.current(), glob)
+            usage = time_ledger.usage(rt.name, policy, None, now)
+            out.append(
+                {
+                    "profile": rt.name,
+                    "age": rt.age,
+                    "has_policy": policy.is_set(),
+                    "general": {
+                        "used_ms": usage.general_used_ms,
+                        "limit_ms": usage.general_limit_ms,
+                        "remaining_ms": usage.general_remaining_ms,
+                        "blocked": usage.blocked_general,
+                    },
+                    "bedtime_active": usage.bedtime_active,
+                }
+            )
+        return JSONResponse({"profiles": out})
 
     async def review_suggest_block_rule(request: Request) -> JSONResponse:
         # Optional aid for the reject flow: draft a natural-language "block similar content"
@@ -1704,12 +2070,19 @@ def create_app(
             Route("/whitelist", whitelist_endpoint, methods=["GET", "POST", "DELETE"]),
             Route("/access-request", access_request_endpoint, methods=["GET", "POST"]),
             Route("/search-request", search_request_endpoint, methods=["GET", "POST"]),
+            Route("/time/state", time_state_endpoint, methods=["GET"]),
+            Route("/time-request", time_request_endpoint, methods=["GET", "POST"]),
             Route("/setup", setup_page, methods=["GET"]),
             Route("/setup/status", setup_status, methods=["GET"]),
             Route("/setup/pin", setup_pin, methods=["POST"]),
             Route("/review", review_page, methods=["GET"]),
             Route("/review/requests", review_requests, methods=["GET"]),
             Route("/review/decision", review_decision, methods=["POST"]),
+            Route("/review/time-requests", review_time_requests, methods=["GET"]),
+            Route("/review/time-decision", review_time_decision, methods=["POST"]),
+            Route("/review/time/usage", review_time_usage, methods=["GET"]),
+            Route("/time/policy", time_policy_endpoint, methods=["GET", "PUT"]),
+            Route("/time/policy/parse", time_policy_parse, methods=["POST"]),
             Route(
                 "/review/suggest-block-rule",
                 review_suggest_block_rule,
