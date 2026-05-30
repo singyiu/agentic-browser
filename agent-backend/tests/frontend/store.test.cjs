@@ -134,6 +134,15 @@ test("reset returns the initial state", () => {
   assert.equal(next.lastUpdated, 0);
 });
 
+test("reset returns a fresh object, not the shared initial reference", () => {
+  const prev = { ...initial, status: "ready", pending: [{ id: "x" }] };
+  const next = requestsReducer(prev, actions.requestsReset());
+  // Mutating the result must never corrupt `initial` for future resets.
+  assert.notStrictEqual(next, initial);
+  assert.notStrictEqual(next.pending, initial.pending);
+  assert.notStrictEqual(next.recent, initial.recent);
+});
+
 test("reducer never mutates the previous state", () => {
   const prev = Object.freeze({
     status: "ready",

@@ -11,6 +11,15 @@
   const PIN_HEADER = "X-Guardian-Parent-Pin";
   let _pin = ""; // in memory only — never localStorage/sessionStorage
 
+  // Redux store for pending-request state (created in store.js, loaded before this file).
+  // Guarded: if the vendored Redux failed to load, AS is null and the badge/polling no-op
+  // while the rest of the dashboard keeps working.
+  const AS = window.AegisStore || null;
+  const POLL_MS = 15000; // pending-request poll cadence; paused while the tab is hidden
+  let _pollTimer = null;
+  let _forceRender = false; // set by decide() so a resolved card leaves even with its note open
+  let _wlCount = 0; // last-known whitelist size, for the dashboard tile across store re-renders
+
   const $ = (id) => document.getElementById(id);
 
   function el(tag, props = {}, ...children) {
@@ -77,27 +86,48 @@
     "settings",
   ];
 
-  /* Dashboard — at-a-glance counts from existing endpoints (no new aggregate
-     route); each tile links into its section. */
+  /* Dashboard — at-a-glance counts. Pending/recent come from the Redux store (kept fresh by
+     polling) so the tiles update live; the whitelist count keeps its own fetch. Falls back to
+     a direct count when Redux is unavailable, so the dashboard never regresses. */
   async function loadDashboard() {
-    let pending = 0;
-    let recent = 0;
-    let wl = 0;
     try {
-      const [rq, rw] = await Promise.all([
-        api("/review/requests"),
-        api("/review/whitelist"),
-      ]);
-      if (rq.ok) {
-        const d = await rq.json();
-        pending = (d.pending || []).length;
-        recent = (d.recent || []).length;
+      if (AS) {
+        const rw = await api("/review/whitelist");
+        if (rw.ok) _wlCount = ((await rw.json()).entries || []).length;
+        refreshRequests({ silent: true }); // store update -> renderFromStore re-renders the tiles
+        renderDashboardCounts(); // instant paint from whatever the store already holds
+      } else {
+        const [rq, rw] = await Promise.all([
+          api("/review/requests"),
+          api("/review/whitelist"),
+        ]);
+        let pending = 0;
+        let recent = 0;
+        if (rq.ok) {
+          const d = await rq.json();
+          pending = (d.pending || []).length;
+          recent = (d.recent || []).length;
+        }
+        if (rw.ok) _wlCount = ((await rw.json()).entries || []).length;
+        renderDashboardTiles(pending, recent, _wlCount);
       }
-      if (rw.ok) wl = ((await rw.json()).entries || []).length;
     } catch (_e) {
       toast("Could not reach the guardian service.");
-      return;
     }
+  }
+
+  // Re-render the dashboard tiles from current store state (called by the store subscriber).
+  function renderDashboardCounts() {
+    if (!AS || $("sec-dashboard").hidden) return;
+    const s = AS.store.getState();
+    renderDashboardTiles(
+      AS.selectors.pendingCount(s),
+      AS.selectors.recent(s).length,
+      _wlCount,
+    );
+  }
+
+  function renderDashboardTiles(pending, recent, wl) {
     $("dash-tiles").replaceChildren(
       dashTile(
         pending,
@@ -403,17 +433,49 @@
     }
   }
 
-  /* Requests — pending access requests + recent decisions (moved here from the
-     old /review page). Approve / reject route through POST /review/decision. */
-  async function loadRequests() {
+  /* Requests — pending access requests + recent decisions (moved here from the old /review
+     page). Approve / reject route through POST /review/decision. The list is rendered from the
+     Redux store by renderFromStore (subscribed in init); fetching dispatches into the store. */
+  function loadRequests() {
+    if (AS) renderFromStore(); // instant paint from the latest poll, then refresh
+    refreshRequests();
+  }
+
+  // Single fetch path for the requests slice. Background polls and the post-decision refresh pass
+  // {silent:true} so a transient failure doesn't spam toasts; foreground loads surface it.
+  async function refreshRequests({ silent = false } = {}) {
+    if (!AS) {
+      // No store (Redux failed to load) — render directly so Requests still works.
+      try {
+        const r = await api("/review/requests");
+        if (r.ok) renderRequests(await r.json());
+        else if (!silent) toast("Could not load requests (" + r.status + ").");
+      } catch (_e) {
+        if (!silent) toast("Could not reach the guardian service.");
+      }
+      return;
+    }
+    AS.store.dispatch(AS.actions.requestsLoading());
     let r;
     try {
       r = await api("/review/requests");
     } catch (_e) {
-      toast("Could not reach the guardian service.");
+      AS.store.dispatch(AS.actions.requestsFailed("network", Date.now()));
+      if (!silent) toast("Could not reach the guardian service.");
       return;
     }
-    if (r.ok) renderRequests(await r.json());
+    if (!r.ok) {
+      AS.store.dispatch(
+        AS.actions.requestsFailed(String(r.status), Date.now()),
+      );
+      if (!silent && r.status !== 403)
+        toast("Could not load requests (" + r.status + ").");
+      return;
+    }
+    const d = await r.json();
+    AS.store.dispatch(
+      AS.actions.requestsLoaded(d.pending || [], d.recent || [], Date.now()),
+    );
   }
 
   function renderRequests(data) {
@@ -666,9 +728,82 @@
         }
         toast("Rejected" + suffix);
       }
-      loadRequests();
+      _forceRender = true; // remove the resolved card even though its reject note is open
+      refreshRequests({ silent: true });
     } else {
       toast("Action failed (" + r.status + ").");
+    }
+  }
+
+  /* ---------- Pending-request badge + polling (Redux-driven) ---------- */
+  // Subscribed to the store: refresh the sidebar count badge on every change, and re-render the
+  // open Requests/Dashboard lists from store state. A poll never clobbers an in-progress review
+  // (typed note / AI rule); decide() sets _forceRender to flush the resolved card.
+  function renderFromStore() {
+    if (!AS) return;
+    const s = AS.store.getState();
+    updateBadge(AS.selectors.pendingCount(s));
+    // Only paint lists from settled, fresh data. On "loading"/"error" keep the last-good DOM
+    // and, crucially, preserve _forceRender so a decision still flushes once a refresh succeeds
+    // (otherwise a failed post-decision poll would strand the resolved card on screen).
+    if (AS.selectors.status(s) !== "ready") return;
+    if (!$("sec-requests").hidden && (_forceRender || !isReviewing())) {
+      renderRequests({
+        pending: AS.selectors.pending(s),
+        recent: AS.selectors.recent(s),
+      });
+      _forceRender = false;
+    }
+    renderDashboardCounts();
+  }
+
+  // True while a card's reject note or AI-rule box is open, so polling won't wipe it.
+  function isReviewing() {
+    const list = $("req-pending-list");
+    return (
+      !!list &&
+      !!list.querySelector(
+        ".reject-note:not([hidden]), .rule-wrap:not([hidden])",
+      )
+    );
+  }
+
+  // The sidebar count badge (and the tab title, so a backgrounded tab still notifies the parent).
+  function updateBadge(n) {
+    const badge = $("nav-requests-badge");
+    if (!badge) return;
+    const label = n > 99 ? "99+" : String(n);
+    badge.textContent = label;
+    badge.hidden = n <= 0;
+    $("nav-requests").setAttribute(
+      "aria-label",
+      n > 0 ? "Requests, " + n + " pending" : "Requests",
+    );
+    document.title = n > 0 ? "(" + label + ") Aegis" : "Aegis";
+  }
+
+  function pollTick() {
+    if (document.hidden) return; // paused while the tab is backgrounded
+    refreshRequests({ silent: true });
+  }
+
+  function startPolling({ immediate = true } = {}) {
+    stopPolling();
+    if (immediate) pollTick();
+    _pollTimer = setInterval(pollTick, POLL_MS);
+  }
+
+  function stopPolling() {
+    if (_pollTimer) {
+      clearInterval(_pollTimer);
+      _pollTimer = null;
+    }
+  }
+
+  // Refresh immediately when the parent returns to the tab (polling was paused while hidden).
+  function onVisibility() {
+    if (!document.hidden && !$("app-shell").hidden) {
+      refreshRequests({ silent: true });
     }
   }
 
@@ -839,6 +974,8 @@
 
   /* ---------- Lock / unlock ---------- */
   function lock() {
+    stopPolling();
+    if (AS) AS.store.dispatch(AS.actions.requestsReset()); // clears badge + title via subscriber
     _pin = "";
     $("app-shell").hidden = true;
     $("pin-gate").hidden = false;
@@ -873,6 +1010,22 @@
       _pin = "";
       $("gate-error").textContent = "Could not unlock.";
       return;
+    }
+    // Seed the requests store from this validation response (no extra fetch) and start polling.
+    if (AS) {
+      try {
+        const d = await r.json();
+        AS.store.dispatch(
+          AS.actions.requestsLoaded(
+            d.pending || [],
+            d.recent || [],
+            Date.now(),
+          ),
+        );
+      } catch (_e) {
+        /* seed best-effort; the first poll will populate the badge */
+      }
+      startPolling({ immediate: false });
     }
     $("pin-gate").hidden = true;
     $("app-shell").hidden = false;
@@ -976,6 +1129,10 @@
     $("set-pin-confirm").addEventListener("input", validatePinMatch);
     initSidebar();
     window.addEventListener("hashchange", route);
+    if (AS) {
+      AS.store.subscribe(renderFromStore); // count badge + live lists react to store changes
+      document.addEventListener("visibilitychange", onVisibility);
+    }
     $("gate-pin").focus();
   });
 })();

@@ -102,6 +102,7 @@
 
 /* Nav item — used for <a> links and <button> controls (lock, collapse). */
 .nav-item {
+  position: relative; /* anchor for the collapsed count badge */
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -150,6 +151,36 @@
 .nav-item[aria-current="page"]:hover {
   background: var(--aegis-terracotta-2);
   color: var(--aegis-cream);
+}
+
+/* Pending-request count badge on the Requests nav item. Solid terracotta on the cream rail;
+   inverts on the active (terracotta) item; overlays the icon when the rail is collapsed. */
+.nav-badge {
+  margin-left: auto; /* push to the row end when the label is visible */
+  min-width: 1.25rem;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--aegis-terracotta);
+  color: var(--aegis-cream);
+  font-size: var(--size-xs);
+  font-weight: var(--weight-semibold);
+  line-height: 1.5;
+  text-align: center;
+}
+.nav-badge[hidden] {
+  display: none;
+}
+.nav-item[aria-current="page"] .nav-badge {
+  background: var(--aegis-cream);
+  color: var(--aegis-terracotta);
+}
+.app-shell.is-collapsed .nav-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  margin: 0;
+  min-width: 1rem;
+  padding: 0 5px;
 }
 
 /* Desktop collapse chevron flips when the rail is collapsed. */
@@ -487,6 +518,13 @@
   .app-shell.is-collapsed .nav-item {
     justify-content: flex-start;
     padding-inline: var(--space-3);
+  }
+  /* Drawer shows labels again, so the badge returns to the row instead of the icon corner. */
+  .app-shell.is-collapsed .nav-badge {
+    position: static;
+    margin-left: auto;
+    top: auto;
+    right: auto;
   }
   .shell-backdrop {
     display: block;

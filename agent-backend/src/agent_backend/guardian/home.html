@@ -12,7 +12,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-180.png" />
     <link rel="stylesheet" href="/static/aegis-tokens.css?v=2" />
     <link rel="stylesheet" href="/static/aegis-components.css?v=4" />
-    <link rel="stylesheet" href="/static/aegis-shell.css" />
+    <link rel="stylesheet" href="/static/aegis-shell.css?v=1" />
   </head>
   <body>
     <!-- Parent PIN gate: shown until the parent unlocks (the page is only ever
@@ -115,6 +115,13 @@
                   </svg>
                 </span>
                 <span class="nav-item__label">Requests</span>
+                <span
+                  id="nav-requests-badge"
+                  class="nav-badge"
+                  hidden
+                  aria-hidden="true"
+                  >0</span
+                >
               </a>
             </li>
             <li>
@@ -546,7 +553,9 @@
     </div>
 
     <div id="toast" hidden></div>
-    <script src="/static/shell.js"></script>
+    <script src="/static/redux.min.js"></script>
+    <script src="/static/store.js?v=1"></script>
+    <script src="/static/shell.js?v=2"></script>
     <script src="/static/profiles.js"></script>
   </body>
 </html>

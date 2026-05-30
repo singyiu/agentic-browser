@@ -56,7 +56,8 @@
           lastUpdated: action.at || 0,
         };
       case "requests/reset":
-        return initial;
+        // Fresh object + arrays, never the shared `initial` reference (immutability rule).
+        return { ...initial, pending: [], recent: [] };
       default:
         return state;
     }
@@ -75,12 +76,15 @@
   // deprecation warning; combineReducers namespaces the slice under `requests`.
   if (typeof window !== "undefined") {
     if (window.Redux) {
-      const create = window.Redux.legacy_createStore || window.Redux.createStore;
+      const create =
+        window.Redux.legacy_createStore || window.Redux.createStore;
       const root = window.Redux.combineReducers({ requests: requestsReducer });
       window.AegisStore = { store: create(root), actions, selectors };
     } else {
       // eslint-disable-next-line no-console
-      console.error("Aegis: Redux failed to load — pending-request badge disabled.");
+      console.error(
+        "Aegis: Redux failed to load — pending-request badge disabled.",
+      );
     }
   }
 
