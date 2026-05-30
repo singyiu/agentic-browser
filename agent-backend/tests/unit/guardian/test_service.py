@@ -20,6 +20,7 @@ from agent_backend.guardian.profiles import load_profiles
 from agent_backend.guardian.prompt import PromptStore
 from agent_backend.guardian.runtime import ProfileRuntime
 from agent_backend.guardian.service import (
+    _activity_digest,
     _parse_activity_summary,
     _summary_is_stale,
     create_app,
@@ -2603,3 +2604,38 @@ def test_activity_summaries_history_newest_first() -> None:
 def test_activity_summaries_requires_pin() -> None:
     client = _client(FakeClassifier(Verdict("allow")), summary_log=FakeLog([]))
     assert client.get("/review/activity/summaries").status_code == 403
+
+
+def test_activity_digest_excludes_global_and_untagged_profiles() -> None:
+    events = [
+        {"event": "allow", "url": "http://a.com", "profile": "alice", "ts": "2026-05-30T01:00"},
+        {"event": "block", "url": "http://b.com", "profile": "global", "ts": "2026-05-30T02:00"},
+        {"event": "allow", "url": "http://c.com", "profile": "", "ts": "2026-05-30T03:00"},
+    ]
+    digest = _activity_digest(events, {"alice": 12})
+    assert "alice" in digest and "a.com" in digest
+    assert "global" not in digest and "b.com" not in digest  # Global profile excluded
+    assert "c.com" not in digest  # untagged event excluded
+
+
+def test_activity_summary_post_drops_global_from_output() -> None:
+    fake = FakeClassifier(
+        Verdict("allow"),
+        rule_result=json.dumps(
+            {
+                "profiles": [
+                    {"profile": "Hei", "summary": "s", "trends": [], "attention": []},
+                    {"profile": "global", "summary": "g", "trends": [], "attention": []},
+                ]
+            }
+        ),
+    )
+    client = _client(
+        fake,
+        log=FakeLog([{"event": "allow", "url": "http://x", "profile": "Hei"}]),
+        summary_log=FakeLog([]),
+    )
+    body = client.post("/review/activity/summary", headers=_PIN, json={}).json()
+    names = [p["profile"] for p in body["profiles"]]
+    assert "Hei" in names
+    assert "global" not in names

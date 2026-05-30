@@ -227,16 +227,23 @@ def _summary_is_stale(ts: str, *, now: datetime | None = None) -> bool:
 def _activity_digest(events: list[dict], ages: dict[str, int], *, max_lines: int = 80) -> str:
     """Per-profile compact digest of recent activity for the summary prompt.
 
-    Groups events by profile with timestamp, host, outcome, and any matched categories, so the
-    model can spot blocked-site attempts, risky content, new/unusual sites, and odd-hour browsing.
+    Only known teen/kid profiles are included — the Global profile and any untagged events are
+    skipped, so the summary is always per real child. Groups by profile with timestamp, host,
+    outcome, and any matched categories, so the model can spot blocked-site attempts, risky
+    content, new/unusual sites, and odd-hour browsing.
     """
     by_profile: dict[str, list[str]] = {}
-    for ev in events[:max_lines]:
+    total = 0
+    for ev in events:
+        if total >= max_lines:
+            break
+        who = str(ev.get("profile") or "").strip()
+        if who not in ages:  # excludes the Global profile and untagged/unknown events
+            continue
         url = str(ev.get("url") or ev.get("url_key") or "").strip()
         if not url:
             continue
         host = extract_host(url) or url
-        who = str(ev.get("profile") or "").strip() or "(unknown)"
         blocked = str(ev.get("event", "")) in ("block", "blocklist_block")
         stamp = str(ev.get("ts") or "")[:16]  # YYYY-MM-DDTHH:MM — enough for time-of-day
         cats = ev.get("categories_matched")
@@ -245,6 +252,7 @@ def _activity_digest(events: list[dict], ages: dict[str, int], *, max_lines: int
             cat_txt = " [" + ", ".join(str(c) for c in cats[:3]) + "]"
         outcome = "blocked" if blocked else "allowed"
         by_profile.setdefault(who, []).append(f"- {stamp} {host} ({outcome}){cat_txt}")
+        total += 1
     if not by_profile:
         return "(no recent activity)"
     blocks = [
@@ -1255,7 +1263,13 @@ def create_app(
             )
         except Exception:  # noqa: BLE001 - best-effort; the dashboard keeps the prior summary
             return JSONResponse({"error": "summary generation failed"}, status_code=502)
-        profiles = _parse_activity_summary(raw)["profiles"]
+        # The summary is per real child — never the shared Global profile (it's fed only teen
+        # activity, but drop any Global entry the model emits anyway).
+        profiles = [
+            p
+            for p in _parse_activity_summary(raw)["profiles"]
+            if p["profile"].strip().lower() != GLOBAL_PROFILE_NAME
+        ]
         generated_at = datetime.now(UTC).isoformat()
         await loop.run_in_executor(
             None,
