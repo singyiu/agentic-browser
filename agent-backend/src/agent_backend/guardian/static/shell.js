@@ -497,18 +497,128 @@
       text: "Confirm reject",
       hidden: true,
     });
+    // Optional "block similar content" workflow: the guardian may ask the AI to draft a
+    // natural-language rule, edit it, choose scope, then confirm. Skipping it leaves reject
+    // exactly as before.
+    const suggestBtn = el("button", {
+      class: "ghost suggest-rule",
+      type: "button",
+      text: "✨ Suggest a rule for similar content",
+      hidden: true,
+    });
+    const ruleBox = el("textarea", {
+      class: "rule-box",
+      rows: "2",
+      "aria-label": "Blocking rule for similar content",
+    });
+    const hardChk = el("input", { type: "checkbox", checked: true });
+    const hardRow = el(
+      "label",
+      { class: "rule-hard" },
+      hardChk,
+      el("span", {
+        text: isSearch
+          ? ' Also block this search term ("' +
+            (req.keyword || "") +
+            '") instantly'
+          : " Also block this site (" + (req.host || "") + ") instantly",
+      }),
+    );
+    const scopeProfile = el("input", {
+      type: "radio",
+      name: "scope-" + req.id,
+      value: "profile",
+      checked: true,
+    });
+    const scopeGlobal = el("input", {
+      type: "radio",
+      name: "scope-" + req.id,
+      value: "global",
+    });
+    const scopeRow = el(
+      "div",
+      { class: "rule-scope" },
+      el("span", { class: "muted", text: "Apply to:" }),
+      el("label", {}, scopeProfile, el("span", { text: " This child" })),
+      el("label", {}, scopeGlobal, el("span", { text: " All children" })),
+    );
+    const dismissBtn = el("button", {
+      class: "ghost rule-dismiss",
+      type: "button",
+      text: "Dismiss",
+    });
+    const ruleWrap = el(
+      "div",
+      { class: "rule-wrap", hidden: true },
+      el("label", {
+        class: "entry-label",
+        text: "AI-suggested rule (edit, or clear the box to skip):",
+      }),
+      ruleBox,
+      hardRow,
+      scopeRow,
+      dismissBtn,
+    );
+
     reject.addEventListener("click", () => {
       noteBox.hidden = false;
       rejectConfirm.hidden = false;
+      suggestBtn.hidden = false;
       reject.hidden = true;
     });
-    rejectConfirm.addEventListener("click", () =>
-      decide(req.id, "reject", { note: noteBox.value.trim() }),
-    );
+
+    suggestBtn.addEventListener("click", async () => {
+      suggestBtn.disabled = true;
+      suggestBtn.textContent = "Generating…";
+      let r;
+      try {
+        r = await api("/review/suggest-block-rule", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: req.id }),
+        });
+      } catch (_e) {
+        toast("Could not reach the guardian service.");
+        suggestBtn.disabled = false;
+        suggestBtn.textContent = "✨ Suggest a rule for similar content";
+        return;
+      }
+      if (r.ok) {
+        const data = await r.json();
+        ruleBox.value = data.rule || "";
+        ruleWrap.hidden = false;
+        suggestBtn.hidden = true;
+      } else {
+        toast("Could not generate a rule (" + r.status + ").");
+        suggestBtn.disabled = false;
+        suggestBtn.textContent = "✨ Suggest a rule for similar content";
+      }
+    });
+
+    dismissBtn.addEventListener("click", () => {
+      ruleWrap.hidden = true;
+      ruleBox.value = "";
+      suggestBtn.hidden = false;
+      suggestBtn.disabled = false;
+      suggestBtn.textContent = "✨ Suggest a rule for similar content";
+    });
+
+    rejectConfirm.addEventListener("click", () => {
+      const extra = { note: noteBox.value.trim() };
+      if (!ruleWrap.hidden) {
+        const rule = ruleBox.value.trim();
+        if (rule) extra.block_rule = rule;
+        extra.block_hard = hardChk.checked;
+        extra.block_scope = scopeGlobal.checked ? "global" : "profile";
+      }
+      decide(req.id, "reject", extra);
+    });
 
     card.append(
       el("div", { class: "actions" }, approve, reject),
       noteBox,
+      suggestBtn,
+      ruleWrap,
       rejectConfirm,
     );
     return card;
@@ -543,7 +653,19 @@
       return;
     }
     if (r.ok) {
-      toast(decision === "approve" ? "Approved ✓" : "Rejected");
+      if (decision === "approve") {
+        toast("Approved ✓");
+      } else {
+        let suffix = "";
+        try {
+          const data = await r.json();
+          if (data.rule_applied || data.hard_block_applied)
+            suffix = " · rule added";
+        } catch (_e) {
+          // No body / parse error — fall back to the plain reject toast.
+        }
+        toast("Rejected" + suffix);
+      }
       loadRequests();
     } else {
       toast("Action failed (" + r.status + ").");

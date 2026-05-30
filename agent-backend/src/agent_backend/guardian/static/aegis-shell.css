@@ -288,6 +288,37 @@
 #sec-requests .reject-confirm {
   margin-top: var(--space-2);
 }
+#sec-requests .suggest-rule {
+  margin-top: var(--space-2);
+  font-size: var(--size-sm);
+}
+#sec-requests .rule-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+#sec-requests .rule-box {
+  width: 100%;
+  min-height: 3.5rem;
+  resize: vertical;
+}
+#sec-requests .rule-box:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+#sec-requests .rule-hard,
+#sec-requests .rule-scope {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-2);
+  font-size: var(--size-sm);
+}
+#sec-requests .rule-scope label {
+  display: inline-flex;
+  align-items: center;
+}
 
 /* ---------- Whitelist ---------- */
 .wl-add {
