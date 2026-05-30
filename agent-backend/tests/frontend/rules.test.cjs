@@ -50,14 +50,20 @@ test("hostOf returns '' for non-host input", () => {
 
 test("seedValue derives the box contents per kind", () => {
   const ev = { url: "https://www.x.com/a?b=1" };
-  assert.equal(seedValue(ev, "exact"), "x.com");
-  assert.equal(seedValue(ev, "wildcard"), "x.com/*");
+  assert.equal(seedValue(ev, "exact"), "https://www.x.com/a?b=1"); // full page URL, verbatim
+  assert.equal(seedValue(ev, "wildcard"), "x.com/*"); // broaden to the whole host
   assert.equal(seedValue(ev, "nl"), "");
   assert.equal(seedValue(ev, "ai"), "");
 });
 
+test("seedValue exact keeps the full path + query (blocks one specific page)", () => {
+  const url = "https://www.youtube.com/results?search_query=How+to+kill";
+  assert.equal(seedValue({ url }, "exact"), url);
+  assert.equal(seedValue({ url }, "wildcard"), "youtube.com/*");
+});
+
 test("seedValue falls back to url_key and tolerates missing data", () => {
-  assert.equal(seedValue({ url_key: "y.com/z" }, "exact"), "y.com");
+  assert.equal(seedValue({ url_key: "y.com/z" }, "exact"), "y.com/z");
   assert.equal(seedValue({}, "exact"), "");
   assert.equal(seedValue(null, "wildcard"), "");
 });

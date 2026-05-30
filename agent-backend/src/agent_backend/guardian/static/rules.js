@@ -46,11 +46,13 @@
     return _DOMAIN.test(host) ? host : "";
   }
 
-  // The value to pre-fill the box with for a given kind, derived from the activity item.
-  // nl/ai start empty (the parent types, or the AI drafts via the suggest endpoint).
+  // The value to pre-fill the box with for a given kind, derived from the activity item:
+  //   exact    -> the full page URL verbatim (block this one page; the backend canonicalizes it),
+  //   wildcard -> host + "/*" (broaden to the whole site),
+  //   nl / ai  -> empty (the parent types, or the AI drafts via the suggest endpoint).
   function seedValue(ev, kind) {
     const url = (ev && (ev.url || ev.url_key)) || "";
-    if (kind === "exact") return hostOf(url);
+    if (kind === "exact") return url;
     if (kind === "wildcard") {
       const h = hostOf(url);
       return h ? h + "/*" : "";
@@ -64,12 +66,21 @@
     const collapsed = String(value == null ? "" : value)
       .replace(/\s+/g, " ")
       .trim();
-    if (!collapsed) return { ok: false, value: "", error: "Enter a rule first." };
+    if (!collapsed)
+      return { ok: false, value: "", error: "Enter a rule first." };
     if (collapsed.length > 512) {
-      return { ok: false, value: collapsed, error: "Rule is too long (max 512 characters)." };
+      return {
+        ok: false,
+        value: collapsed,
+        error: "Rule is too long (max 512 characters).",
+      };
     }
     if (_CONTROL.test(collapsed)) {
-      return { ok: false, value: collapsed, error: "Rule contains invalid characters." };
+      return {
+        ok: false,
+        value: collapsed,
+        error: "Rule contains invalid characters.",
+      };
     }
     return { ok: true, value: collapsed, error: "" };
   }
