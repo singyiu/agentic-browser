@@ -352,10 +352,41 @@
 }
 
 /* ---------- Activity: build-a-rule + AI suggestions ---------- */
+#sec-activity .recent-row {
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+#sec-activity .recent-row:hover,
+#sec-activity .recent-row:focus-within {
+  background: var(--bg-2);
+}
 #sec-activity .add-rule {
   margin-left: auto; /* push to the far right of the row */
   font-size: var(--size-sm);
   white-space: nowrap;
+  opacity: 0; /* hidden at rest; revealed on hover, keyboard focus, or touch */
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+#sec-activity .recent-row:hover .add-rule,
+#sec-activity .recent-row:focus-within .add-rule,
+#sec-activity .activity-item:has(.rule-wrap) .add-rule {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  /* No hover on touch devices — keep the trigger visible. */
+  #sec-activity .add-rule {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #sec-activity .recent-row,
+  #sec-activity .add-rule {
+    transition: none;
+  }
 }
 #sec-activity .rule-wrap {
   display: flex;

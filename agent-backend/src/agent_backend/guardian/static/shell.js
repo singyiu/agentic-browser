@@ -25,6 +25,7 @@
   // simply don't appear, the rest of the dashboard is unaffected.
   const AR = window.AegisRules || null;
   let _openRuleBuilder = null; // the single inline builder currently expanded (one open at a time)
+  let _openRuleTrigger = null; // the button that opened it, so its aria-expanded resets on close
   let _ruleBuilderSeq = 0; // unique radio-group names so multiple builders never collide
   let _actProfiles = []; // profiles cached from the last load, for the builder's checkboxes
 
@@ -866,9 +867,11 @@
       class: "ghost add-rule",
       type: "button",
       text: "+ Rule",
+      "aria-label": "Create a blocking rule from this item",
+      "aria-expanded": "false",
     });
     addBtn.addEventListener("click", () =>
-      toggleRuleBuilder(item, { seedEv: ev, seedKind: "exact" }),
+      toggleRuleBuilder(item, { seedEv: ev, seedKind: "exact" }, addBtn),
     );
     row.append(addBtn);
     return item;
@@ -894,12 +897,16 @@
       _openRuleBuilder.remove();
       _openRuleBuilder = null;
     }
+    if (_openRuleTrigger) {
+      _openRuleTrigger.setAttribute("aria-expanded", "false");
+      _openRuleTrigger = null;
+    }
   }
 
   // Open the inline builder inside `container` (an activity item or a suggestion card), closing
   // any other open one first — only a single builder is ever expanded. A second click on the same
   // trigger closes it (toggle).
-  function toggleRuleBuilder(container, opts) {
+  function toggleRuleBuilder(container, opts, trigger) {
     const openHere =
       _openRuleBuilder && _openRuleBuilder.parentNode === container;
     closeRuleBuilder();
@@ -907,6 +914,8 @@
     const wrap = buildRuleBuilder(opts);
     container.append(wrap);
     _openRuleBuilder = wrap;
+    _openRuleTrigger = trigger || null;
+    if (trigger) trigger.setAttribute("aria-expanded", "true");
   }
 
   // The reusable inline rule builder. `seedEv` is the source activity item (null for an AI
@@ -1139,13 +1148,14 @@
       class: "ghost use-rule",
       type: "button",
       text: "Use this rule",
+      "aria-expanded": "false",
     });
     useBtn.addEventListener("click", () =>
-      toggleRuleBuilder(card, {
-        seedEv: null,
-        seedKind: s.kind,
-        seedValue: s.value,
-      }),
+      toggleRuleBuilder(
+        card,
+        { seedEv: null, seedKind: s.kind, seedValue: s.value },
+        useBtn,
+      ),
     );
     card.append(
       el(
