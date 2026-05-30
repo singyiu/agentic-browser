@@ -18,8 +18,13 @@ __pycache__/
 *.egg-info/
 agent-backend/data/
 
-# parental-control extension secret (written at launch)
+# parental-control extension secret (written at launch / baked into the CRX)
 extension/guardian-config.json
+
+# extension CRX signing key (load-bearing: defines the extension ID — back it up,
+# never commit) and the packed CRX + update manifest served to the kid browser.
+agent-backend/.secrets/
+agent-backend/.chromium-dist/
 
 # observability stack local config (host paths/ports)
 observability/.env
