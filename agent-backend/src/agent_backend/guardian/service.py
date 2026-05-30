@@ -17,7 +17,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from ..config import ConfigError
-from .access_requests import RequestStore
+from .access_requests import AccessRequest, RequestStore
 from .blocklist import BlocklistStore
 from .cache import VerdictCache
 from .classifier import Classifier
@@ -688,6 +688,13 @@ def create_app(
                 {"error": "id and decision (approve|reject) required"}, status_code=422
             )
         note = str(body.get("note", "")).strip() or None
+        # Optional "block similar content" rule applied only on reject (see _apply_block_rule):
+        # a free-text classifier rule and/or a hard list entry, scoped to this teen or Global.
+        block_rule = str(body.get("block_rule", "")).strip() or None
+        block_hard = bool(body.get("block_hard", False))
+        block_scope = (
+            "global" if str(body.get("block_scope", "")).strip() == "global" else "profile"
+        )
         loop = asyncio.get_running_loop()
 
         # Find which teen owns this request (ids are globally unique uuid4); the decision and its
@@ -729,10 +736,25 @@ def create_app(
                     return JSONResponse({"error": "keyword write failed"}, status_code=500)
                 event_log.log("search_request_approved", id=request_id, profile=owner.name)
                 metrics.record_access_decision("approve")
-            else:
-                event_log.log("search_request_rejected", id=request_id, profile=owner.name)
-                metrics.record_access_decision("reject")
-            return JSONResponse({"id": decided.id, "status": decided.status})
+                return JSONResponse({"id": decided.id, "status": decided.status})
+            event_log.log("search_request_rejected", id=request_id, profile=owner.name)
+            metrics.record_access_decision("reject")
+            applied_rule, applied_hard = await _apply_block_rule(
+                owner,
+                scope=block_scope,
+                rule=block_rule,
+                hard=block_hard,
+                kind="search",
+                existing=existing,
+            )
+            return JSONResponse(
+                {
+                    "id": decided.id,
+                    "status": decided.status,
+                    "rule_applied": applied_rule,
+                    "hard_block_applied": applied_hard,
+                }
+            )
 
         # The whitelist entry is the parent's choice; default to the request's RAW url (an exact
         # match) — never the url_key, which collapses YouTube videos to a non-matching topic.
@@ -771,10 +793,25 @@ def create_app(
                 return JSONResponse({"error": "whitelist write failed"}, status_code=500)
             event_log.log("access_request_approved", id=request_id, entry=entry, profile=owner.name)
             metrics.record_access_decision("approve")
-        else:
-            event_log.log("access_request_rejected", id=request_id, profile=owner.name)
-            metrics.record_access_decision("reject")
-        return JSONResponse({"id": decided.id, "status": decided.status})
+            return JSONResponse({"id": decided.id, "status": decided.status})
+        event_log.log("access_request_rejected", id=request_id, profile=owner.name)
+        metrics.record_access_decision("reject")
+        applied_rule, applied_hard = await _apply_block_rule(
+            owner,
+            scope=block_scope,
+            rule=block_rule,
+            hard=block_hard,
+            kind=existing.kind,
+            existing=existing,
+        )
+        return JSONResponse(
+            {
+                "id": decided.id,
+                "status": decided.status,
+                "rule_applied": applied_rule,
+                "hard_block_applied": applied_hard,
+            }
+        )
 
     async def review_suggest_block_rule(request: Request) -> JSONResponse:
         # Optional aid for the reject flow: draft a natural-language "block similar content"
@@ -862,6 +899,71 @@ def create_app(
         targets = list(_pm.snapshot().values()) if rt.name == GLOBAL_PROFILE_NAME else [rt]
         for target in targets:
             await loop.run_in_executor(None, target.cache.clear)
+
+    async def _apply_block_rule(
+        owner: ProfileRuntime,
+        *,
+        scope: str,
+        rule: str | None,
+        hard: bool,
+        kind: str,
+        existing: AccessRequest,
+    ) -> tuple[bool, bool]:
+        """On reject, optionally add a generalized block for *similar* content.
+
+        Two complementary effects, both optional and scoped to this teen (``"profile"``) or the
+        shared Global profile (``"global"``):
+          - ``rule``: a natural-language line appended to the classifier prompt (semantic match).
+          - ``hard``: the exact host (URL) or keyword (search) added to the hard list (AI-free).
+
+        Strictly best-effort: the reject is already persisted, so a rejected/oversized/failed
+        write is logged and reported as not-applied, never raised. Returns
+        ``(rule_applied, hard_block_applied)``.
+        """
+        if not rule and not hard:
+            return False, False
+        target = _pm.global_runtime() if scope == "global" else owner
+        loop = asyncio.get_running_loop()
+        applied_rule = False
+        applied_hard = False
+        if rule:
+            if not _valid_prompt_text(rule):
+                event_log.log("block_rule_skipped", reason="invalid", profile=target.name)
+            else:
+                applied_rule = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        target.prompt_store.append,
+                        rule,
+                        separator="\n\n",
+                        max_chars=_MAX_PROMPT_CHARS,
+                    ),
+                )
+                event_log.log(
+                    "block_rule_added" if applied_rule else "block_rule_skipped",
+                    reason=None if applied_rule else "prompt_full",
+                    profile=target.name,
+                    scope=scope,
+                    kind=kind,
+                )
+        if hard:
+            entry = (existing.keyword or "") if kind == "search" else (existing.host or "")
+            entry = entry.strip()
+            store = target.search_block if kind == "search" else target.blocklist
+            if entry and len(entry) <= 512 and entry.isprintable():
+                try:
+                    await loop.run_in_executor(None, store.add, entry)
+                    applied_hard = True
+                    event_log.log(
+                        "hard_block_added", profile=target.name, scope=scope, kind=kind, entry=entry
+                    )
+                except OSError:
+                    event_log.log("hard_block_skipped", reason="write_failed", profile=target.name)
+            else:
+                event_log.log("hard_block_skipped", reason="no_target", profile=target.name)
+        if applied_rule or applied_hard:
+            await _clear_caches_after_list_change(target)
+        return applied_rule, applied_hard
 
     async def _review_list(request: Request, kind: str) -> JSONResponse:
         # Shared parent-facing allow/deny list management (kind = "whitelist" | "blocklist"),

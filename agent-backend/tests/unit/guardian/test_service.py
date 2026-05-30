@@ -1083,6 +1083,205 @@ def test_suggest_block_rule_strips_and_caps_output(tmp_path: Path) -> None:
     assert len(rule) <= 300
 
 
+# --- reject + optional block rule / hard-block (scoped) ---
+
+
+def _decision_client(
+    tmp_path: Path,
+    *,
+    classifier: object | None = None,
+    parent_pin: str = "testpin",
+) -> tuple[TestClient, dict[str, ProfileRuntime], ProfileManager]:
+    """Client over two file-backed teens plus a tmp-isolated Global runtime.
+
+    Returns the teen runtimes (assert on their prompt/blocklist/cache) and the manager
+    (``manager.global_runtime()`` for All-children scope assertions).
+    """
+    runtimes = _two_profiles(tmp_path)
+    manager = ProfileManager({}, runtimes, profiles_path=None, data_dir=str(tmp_path / "pdata"))
+    app = create_app(
+        _config(parent_pin=parent_pin),
+        classifier=classifier or FakeClassifier(Verdict("allow")),
+        event_log=FakeLog(),
+        manager=manager,
+    )
+    return TestClient(app), runtimes, manager
+
+
+def _seed_alice_url(runtimes: dict[str, ProfileRuntime], *, host: str = "badsite.test") -> str:
+    req = runtimes["alice"].request_store.add_request(
+        url=f"https://{host}/x", url_key=f"{host}:x", host=host, reason="adult", note=""
+    )
+    return req.id
+
+
+def test_reject_with_block_rule_appends_to_profile_prompt(tmp_path: Path) -> None:
+    client, runtimes, _ = _decision_client(tmp_path)
+    rid = _seed_alice_url(runtimes)
+    resp = client.post(
+        "/review/decision",
+        json={"id": rid, "decision": "reject", "block_rule": "Block adult sites."},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "rejected"
+    assert body["rule_applied"] is True
+    assert "Block adult sites." in runtimes["alice"].prompt_store.current()
+    assert runtimes["alice"].cache.cleared >= 1
+
+
+def test_reject_with_block_rule_appends_after_existing_prompt(tmp_path: Path) -> None:
+    client, runtimes, _ = _decision_client(tmp_path)
+    runtimes["alice"].prompt_store.set("existing rule")
+    rid = _seed_alice_url(runtimes)
+    client.post(
+        "/review/decision",
+        json={"id": rid, "decision": "reject", "block_rule": "Block adult sites."},
+        headers=_PIN,
+    )
+    assert runtimes["alice"].prompt_store.current() == "existing rule\n\nBlock adult sites."
+
+
+def test_reject_without_block_rule_leaves_stores_untouched(tmp_path: Path) -> None:
+    client, runtimes, _ = _decision_client(tmp_path)
+    rid = _seed_alice_url(runtimes)
+    resp = client.post(
+        "/review/decision",
+        json={"id": rid, "decision": "reject", "note": "no"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["rule_applied"] is False
+    assert resp.json()["hard_block_applied"] is False
+    assert runtimes["alice"].prompt_store.current() == ""
+    assert runtimes["alice"].cache.cleared == 0
+
+
+def test_reject_block_hard_url_adds_host_to_blocklist(tmp_path: Path) -> None:
+    client, runtimes, _ = _decision_client(tmp_path)
+    rid = _seed_alice_url(runtimes)
+    resp = client.post(
+        "/review/decision",
+        json={"id": rid, "decision": "reject", "block_hard": True},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["hard_block_applied"] is True
+    assert "badsite.test" in runtimes["alice"].blocklist.current().values
+
+
+def test_reject_block_hard_search_adds_keyword_to_search_block(tmp_path: Path) -> None:
+    client, runtimes, _ = _decision_client(tmp_path)
+    req = runtimes["alice"].request_store.add_request(
+        url="https://s.test/?q=porn",
+        url_key="s.test/",
+        host="s.test",
+        reason="adult",
+        note="",
+        kind="search",
+        keyword="porn",
+    )
+    resp = client.post(
+        "/review/decision",
+        json={"id": req.id, "decision": "reject", "block_hard": True},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["hard_block_applied"] is True
+    assert runtimes["alice"].search_block.current().matches("porn")
+
+
+def test_reject_block_scope_global_writes_to_global_not_teen(tmp_path: Path) -> None:
+    client, runtimes, manager = _decision_client(tmp_path)
+    rid = _seed_alice_url(runtimes)
+    resp = client.post(
+        "/review/decision",
+        json={
+            "id": rid,
+            "decision": "reject",
+            "block_rule": "Block adult sites.",
+            "block_hard": True,
+            "block_scope": "global",
+        },
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    glob = manager.global_runtime()
+    assert "Block adult sites." in glob.prompt_store.current()
+    assert "badsite.test" in glob.blocklist.current().values
+    # The teen's own stores stay clean — the rule lives only on Global.
+    assert runtimes["alice"].prompt_store.current() == ""
+    assert "badsite.test" not in runtimes["alice"].blocklist.current().values
+    # A Global edit invalidates every teen's verdict cache.
+    assert runtimes["alice"].cache.cleared >= 1
+    assert runtimes["bob"].cache.cleared >= 1
+
+
+def test_approve_ignores_block_rule_fields(tmp_path: Path) -> None:
+    client, runtimes, _ = _decision_client(tmp_path)
+    rid = _seed_alice_url(runtimes)
+    resp = client.post(
+        "/review/decision",
+        json={
+            "id": rid,
+            "decision": "approve",
+            "whitelist_entry": "badsite.test",
+            "block_rule": "Block adult sites.",
+            "block_hard": True,
+        },
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+    assert runtimes["alice"].prompt_store.current() == ""  # rule never applied on approve
+    assert "rule_applied" not in resp.json()
+
+
+def test_reject_block_rule_overflow_skips_but_still_rejects(tmp_path: Path) -> None:
+    client, runtimes, _ = _decision_client(tmp_path)
+    runtimes["alice"].prompt_store.set("x" * 3995)
+    rid = _seed_alice_url(runtimes)
+    resp = client.post(
+        "/review/decision",
+        json={"id": rid, "decision": "reject", "block_rule": "y" * 50},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "rejected"
+    assert resp.json()["rule_applied"] is False
+    assert runtimes["alice"].prompt_store.current() == "x" * 3995  # unchanged
+
+
+def test_reject_block_rule_invalid_chars_skipped_but_still_rejects(tmp_path: Path) -> None:
+    client, runtimes, _ = _decision_client(tmp_path)
+    rid = _seed_alice_url(runtimes)
+    resp = client.post(
+        "/review/decision",
+        json={"id": rid, "decision": "reject", "block_rule": "bad\x00rule"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "rejected"
+    assert resp.json()["rule_applied"] is False
+    assert runtimes["alice"].prompt_store.current() == ""
+
+
+def test_reject_block_hard_empty_host_skips_hard_block(tmp_path: Path) -> None:
+    client, runtimes, _ = _decision_client(tmp_path)
+    req = runtimes["alice"].request_store.add_request(
+        url="https://x.test/", url_key="x.test/", host="", reason="r", note=""
+    )
+    resp = client.post(
+        "/review/decision",
+        json={"id": req.id, "decision": "reject", "block_hard": True},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["hard_block_applied"] is False
+    assert runtimes["alice"].blocklist.current().values == ()
+
+
 # --- multi-profile isolation (one backend, several teens) -------------------
 
 _ALICE = {"X-Guardian-Token": "tok-alice"}
