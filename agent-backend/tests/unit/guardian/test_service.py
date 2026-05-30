@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from starlette.testclient import TestClient
@@ -18,7 +19,11 @@ from agent_backend.guardian.profile_manager import ProfileManager
 from agent_backend.guardian.profiles import load_profiles
 from agent_backend.guardian.prompt import PromptStore
 from agent_backend.guardian.runtime import ProfileRuntime
-from agent_backend.guardian.service import create_app
+from agent_backend.guardian.service import (
+    _parse_activity_summary,
+    _summary_is_stale,
+    create_app,
+)
 from agent_backend.guardian.verdict import Verdict
 from agent_backend.guardian.whitelist import Whitelist, WhitelistStore
 
@@ -35,6 +40,7 @@ def _config(parent_pin: str = "testpin", admin_path: str = ":memory:") -> Guardi
         token="secret",
         cache_path=":memory:",
         event_log_path="/tmp/guardian_test.jsonl",
+        summary_log_path="/tmp/guardian_test_summaries.jsonl",
         whitelist_path=":memory:",
         blocklist_path=":memory:",
         requests_path=":memory:",
@@ -146,12 +152,15 @@ def _client(
     request_store: object = None,
     parent_pin: str = "testpin",
     admin_path: str = ":memory:",
+    summary_log: object = None,
 ) -> TestClient:
     kwargs: dict[str, object] = {}
     if whitelist is not None:
         kwargs["whitelist"] = whitelist
     if request_store is not None:
         kwargs["request_store"] = request_store
+    if summary_log is not None:
+        kwargs["summary_log"] = summary_log
     app = create_app(
         _config(parent_pin=parent_pin, admin_path=admin_path),
         classifier=classifier,
@@ -2367,3 +2376,230 @@ def test_review_search_keywords_clears_cache(tmp_path: Path) -> None:
         headers=_PIN,
     )
     assert runtimes["alice"].cache.cleared > before
+
+
+# ---------------------------------------------------------------------------
+# Activity summary: dashboard panel + saved-summaries history tab
+# ---------------------------------------------------------------------------
+
+
+def test_parse_activity_summary_valid() -> None:
+    raw = json.dumps(
+        {
+            "profiles": [
+                {
+                    "profile": "Hei",
+                    "summary": "Mostly games and videos.",
+                    "trends": ["more YouTube"],
+                    "attention": ["tried a blocked site twice"],
+                }
+            ]
+        }
+    )
+    out = _parse_activity_summary(raw)
+    assert out["profiles"][0]["profile"] == "Hei"
+    assert out["profiles"][0]["trends"] == ["more YouTube"]
+    assert out["profiles"][0]["attention"] == ["tried a blocked site twice"]
+
+
+def test_parse_activity_summary_extracts_from_prose() -> None:
+    raw = 'Sure! {"profiles":[{"profile":"A","summary":"s","trends":[],"attention":[]}]} done'
+    assert _parse_activity_summary(raw)["profiles"][0]["profile"] == "A"
+
+
+def test_parse_activity_summary_missing_key_is_empty() -> None:
+    assert _parse_activity_summary('{"foo": 1}') == {"profiles": []}
+
+
+def test_parse_activity_summary_non_json_is_empty() -> None:
+    assert _parse_activity_summary("the model rambled with no json") == {"profiles": []}
+    assert _parse_activity_summary("") == {"profiles": []}
+
+
+def test_parse_activity_summary_drops_bad_items() -> None:
+    raw = json.dumps(
+        {
+            "profiles": [
+                {"summary": "no name"},  # dropped: empty profile
+                "stringitem",  # dropped: not a dict
+                {"profile": "Ok", "summary": "y", "trends": "x", "attention": [123, "real"]},
+            ]
+        }
+    )
+    out = _parse_activity_summary(raw)["profiles"]
+    assert len(out) == 1
+    assert out[0]["profile"] == "Ok"
+    assert out[0]["trends"] == []  # non-list -> []
+    assert out[0]["attention"] == ["real"]  # non-str 123 dropped
+
+
+def test_parse_activity_summary_clamps_item_counts() -> None:
+    raw = json.dumps(
+        {
+            "profiles": [
+                {
+                    "profile": "A",
+                    "summary": "s",
+                    "trends": [f"t{i}" for i in range(20)],
+                    "attention": [],
+                }
+            ]
+        }
+    )
+    assert len(_parse_activity_summary(raw)["profiles"][0]["trends"]) == 6
+
+
+def test_summary_is_stale_true_when_old() -> None:
+    now = datetime(2026, 5, 30, 12, 0, tzinfo=UTC)
+    assert _summary_is_stale((now - timedelta(hours=49)).isoformat(), now=now) is True
+
+
+def test_summary_is_stale_false_when_recent() -> None:
+    now = datetime(2026, 5, 30, 12, 0, tzinfo=UTC)
+    assert _summary_is_stale((now - timedelta(hours=1)).isoformat(), now=now) is False
+
+
+def test_summary_is_stale_true_for_blank_or_unparseable() -> None:
+    assert _summary_is_stale("") is True
+    assert _summary_is_stale("not-a-date") is True
+
+
+def test_activity_summary_get_none_no_activity() -> None:
+    client = _client(FakeClassifier(Verdict("allow")), log=FakeLog([]), summary_log=FakeLog([]))
+    body = client.get("/review/activity/summary", headers=_PIN).json()
+    assert body["generated_at"] is None
+    assert body["stale"] is False
+    assert body["has_activity"] is False
+    assert body["profiles"] == []
+
+
+def test_activity_summary_get_none_with_activity_is_stale() -> None:
+    client = _client(
+        FakeClassifier(Verdict("allow")),
+        log=FakeLog([{"event": "allow", "url": "http://x"}]),
+        summary_log=FakeLog([]),
+    )
+    body = client.get("/review/activity/summary", headers=_PIN).json()
+    assert body["has_activity"] is True
+    assert body["stale"] is True
+    assert body["generated_at"] is None
+
+
+def test_activity_summary_get_fresh() -> None:
+    record = {
+        "ts": datetime.now(UTC).isoformat(),
+        "profiles": [{"profile": "Hei", "summary": "s", "trends": [], "attention": []}],
+    }
+    client = _client(
+        FakeClassifier(Verdict("allow")),
+        log=FakeLog([{"event": "allow"}]),
+        summary_log=FakeLog([record]),
+    )
+    body = client.get("/review/activity/summary", headers=_PIN).json()
+    assert body["stale"] is False
+    assert body["profiles"][0]["profile"] == "Hei"
+    assert body["generated_at"] == record["ts"]
+
+
+def test_activity_summary_get_old_is_stale() -> None:
+    old = (datetime.now(UTC) - timedelta(hours=72)).isoformat()
+    client = _client(
+        FakeClassifier(Verdict("allow")),
+        log=FakeLog([{"event": "allow"}]),
+        summary_log=FakeLog([{"ts": old, "profiles": []}]),
+    )
+    assert client.get("/review/activity/summary", headers=_PIN).json()["stale"] is True
+
+
+def test_activity_summary_get_requires_pin() -> None:
+    client = _client(FakeClassifier(Verdict("allow")), summary_log=FakeLog([]))
+    assert client.get("/review/activity/summary").status_code == 403
+
+
+def test_activity_summary_post_generates_and_persists() -> None:
+    summary_log = FakeLog([])
+    fake = FakeClassifier(
+        Verdict("allow"),
+        rule_result=json.dumps(
+            {
+                "profiles": [
+                    {
+                        "profile": "Hei",
+                        "summary": "Mostly homework.",
+                        "trends": ["more reading"],
+                        "attention": [],
+                    }
+                ]
+            }
+        ),
+    )
+    client = _client(
+        fake,
+        log=FakeLog(
+            [
+                {
+                    "event": "allow",
+                    "url": "http://x",
+                    "profile": "Hei",
+                    "ts": "2026-05-30T01:00:00+00:00",
+                }
+            ]
+        ),
+        summary_log=summary_log,
+    )
+    body = client.post("/review/activity/summary", headers=_PIN, json={}).json()
+    assert body["profiles"][0]["profile"] == "Hei"
+    assert body["stale"] is False
+    assert body["has_activity"] is True
+    assert body["generated_at"]
+    assert fake.generate_calls == 1
+    assert summary_log.events == ["activity_summary"]
+
+
+def test_activity_summary_post_no_activity_skips_llm() -> None:
+    summary_log = FakeLog([])
+    fake = FakeClassifier(Verdict("allow"), rule_result="{}")
+    client = _client(fake, log=FakeLog([]), summary_log=summary_log)
+    body = client.post("/review/activity/summary", headers=_PIN, json={}).json()
+    assert body["has_activity"] is False
+    assert body["profiles"] == []
+    assert fake.generate_calls == 0
+    assert summary_log.events == []
+
+
+def test_activity_summary_post_malformed_model_output_is_safe() -> None:
+    summary_log = FakeLog([])
+    fake = FakeClassifier(Verdict("allow"), rule_result="the model rambled, no json")
+    client = _client(
+        fake, log=FakeLog([{"event": "allow", "url": "http://x"}]), summary_log=summary_log
+    )
+    resp = client.post("/review/activity/summary", headers=_PIN, json={})
+    assert resp.status_code == 200
+    assert resp.json()["profiles"] == []
+    assert summary_log.events == ["activity_summary"]  # the run is still recorded
+
+
+def test_activity_summary_post_classifier_error_is_502() -> None:
+    fake = FakeClassifier(Verdict("allow"), rule_result=RuntimeError("boom"))
+    client = _client(
+        fake, log=FakeLog([{"event": "allow", "url": "http://x"}]), summary_log=FakeLog([])
+    )
+    assert client.post("/review/activity/summary", headers=_PIN, json={}).status_code == 502
+
+
+def test_activity_summary_post_requires_pin() -> None:
+    client = _client(FakeClassifier(Verdict("allow")), summary_log=FakeLog([]))
+    assert client.post("/review/activity/summary", json={}).status_code == 403
+
+
+def test_activity_summaries_history_newest_first() -> None:
+    runs = [{"ts": "t2", "profiles": []}, {"ts": "t1", "profiles": []}]
+    client = _client(FakeClassifier(Verdict("allow")), summary_log=FakeLog(runs))
+    resp = client.get("/review/activity/summaries", headers=_PIN)
+    assert resp.status_code == 200
+    assert resp.json()["summaries"] == runs
+
+
+def test_activity_summaries_requires_pin() -> None:
+    client = _client(FakeClassifier(Verdict("allow")), summary_log=FakeLog([]))
+    assert client.get("/review/activity/summaries").status_code == 403

@@ -9,6 +9,7 @@ import json
 import re
 import time
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,11 @@ ACTIVITY_EVENTS: tuple[str, ...] = (
 )
 ACTIVITY_LIMIT_DEFAULT = 100
 ACTIVITY_LIMIT_MAX = 500
+
+# AI activity-summary tuning. A saved summary older than this is "stale" → the dashboard
+# auto-regenerates it on load; summaries review a wider window than the timeline default.
+SUMMARY_STALE_AFTER_S = 48 * 3600
+SUMMARY_LIMIT_DEFAULT = 200
 
 
 def _parse_activity_limit(raw: str | None) -> int:
@@ -126,6 +132,126 @@ def _summarize_activity(events: list[dict], *, max_lines: int = 60) -> str:
         suffix = f", {who}" if who else ""
         lines.append(f"- {host} ({'blocked' if blocked else 'allowed'}{suffix})")
     return "\n".join(lines) if lines else "(none)"
+
+
+_MAX_SUMMARY_PROFILES = 12
+_MAX_SUMMARY_ITEMS = 6
+_SUMMARY_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _clean_str_list(
+    value: object, *, max_len: int, max_items: int = _MAX_SUMMARY_ITEMS
+) -> list[str]:
+    """Coerce model-supplied ``trends``/``attention`` into a bounded list of clean strings.
+
+    Non-list input, non-string entries, and blanks are dropped; each kept string is trimmed and
+    truncated, and the list is capped — so a confused model can't bloat the saved summary.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str):
+            continue
+        text = entry.strip()[:max_len]
+        if text:
+            out.append(text)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _parse_activity_summary(raw: str) -> dict:
+    """Best-effort extraction of ``{"profiles":[{profile,summary,trends[],attention[]}]}``.
+
+    Mirrors ``_parse_rule_suggestions``' fail-safe stance: any malformed / non-JSON output yields
+    ``{"profiles": []}`` (never raises), so a confused model can't 500 the endpoint. Each profile
+    needs a non-empty name; ``summary`` is trimmed/clamped; ``trends``/``attention`` are cleaned
+    lists; profiles are capped.
+    """
+    empty: dict = {"profiles": []}
+    if not raw:
+        return empty
+    text = raw.strip()
+    candidates = [text]
+    match = _SUMMARY_OBJECT_RE.search(text)
+    if match is not None:
+        candidates.append(match.group(0))
+    data: object = None
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict):
+            break
+    if not isinstance(data, dict) or not isinstance(data.get("profiles"), list):
+        return empty
+    out: list[dict] = []
+    for item in data["profiles"]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("profile", "")).strip()[:80]
+        if not name:
+            continue
+        out.append(
+            {
+                "profile": name,
+                "summary": str(item.get("summary", "")).strip()[:600],
+                "trends": _clean_str_list(item.get("trends"), max_len=200),
+                "attention": _clean_str_list(item.get("attention"), max_len=240),
+            }
+        )
+        if len(out) >= _MAX_SUMMARY_PROFILES:
+            break
+    return {"profiles": out}
+
+
+def _summary_is_stale(ts: str, *, now: datetime | None = None) -> bool:
+    """Whether a saved summary's timestamp is old enough to auto-regenerate.
+
+    Blank or unparseable timestamps are treated as stale (safe default: prefer regenerating).
+    """
+    if not ts:
+        return True
+    try:
+        generated = datetime.fromisoformat(ts)
+    except ValueError:
+        return True
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=UTC)
+    current = now or datetime.now(UTC)
+    return (current - generated).total_seconds() > SUMMARY_STALE_AFTER_S
+
+
+def _activity_digest(events: list[dict], ages: dict[str, int], *, max_lines: int = 80) -> str:
+    """Per-profile compact digest of recent activity for the summary prompt.
+
+    Groups events by profile with timestamp, host, outcome, and any matched categories, so the
+    model can spot blocked-site attempts, risky content, new/unusual sites, and odd-hour browsing.
+    """
+    by_profile: dict[str, list[str]] = {}
+    for ev in events[:max_lines]:
+        url = str(ev.get("url") or ev.get("url_key") or "").strip()
+        if not url:
+            continue
+        host = extract_host(url) or url
+        who = str(ev.get("profile") or "").strip() or "(unknown)"
+        blocked = str(ev.get("event", "")) in ("block", "blocklist_block")
+        stamp = str(ev.get("ts") or "")[:16]  # YYYY-MM-DDTHH:MM — enough for time-of-day
+        cats = ev.get("categories_matched")
+        cat_txt = ""
+        if isinstance(cats, list) and cats:
+            cat_txt = " [" + ", ".join(str(c) for c in cats[:3]) + "]"
+        outcome = "blocked" if blocked else "allowed"
+        by_profile.setdefault(who, []).append(f"- {stamp} {host} ({outcome}){cat_txt}")
+    if not by_profile:
+        return "(no recent activity)"
+    blocks = [
+        f"PROFILE: {who} (age {ages.get(who, DEFAULT_AGE)})\n" + "\n".join(rows)
+        for who, rows in by_profile.items()
+    ]
+    return "\n\n".join(blocks)
 
 
 _MAX_PROMPT_CHARS = 4000
@@ -215,6 +341,7 @@ def create_app(
     classifier: Classifier | None = None,
     cache: VerdictCache | None = None,
     event_log: EventLog | None = None,
+    summary_log: EventLog | None = None,
     metrics: GuardianMetrics | None = None,
     whitelist: WhitelistStore | None = None,
     request_store: RequestStore | None = None,
@@ -232,6 +359,7 @@ def create_app(
     config = config or GuardianConfig.from_env()
     classifier = classifier or Classifier(config)
     event_log = event_log or EventLog(config.event_log_path)
+    summary_log = summary_log or EventLog(config.summary_log_path)
     metrics = metrics or GuardianMetrics()
     # The PIN lives in the store (hash file written by /setup), with the env PIN as fallback,
     # so a PIN created at runtime takes effect without restarting (config is frozen at startup).
@@ -1052,6 +1180,112 @@ def create_app(
         event_log.log("activity_suggest_rules", profile=profile or "", count=len(suggestions))
         return JSONResponse({"suggestions": suggestions})
 
+    async def review_activity_summary(request: Request) -> JSONResponse:
+        # Dashboard panel. GET returns the latest saved per-profile summary plus a staleness
+        # flag (no LLM); POST reviews recent activity, writes one timestamped run, and returns
+        # it. PIN-gated; generation is fail-safe (malformed model output → empty, never 500).
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        loop = asyncio.get_running_loop()
+        has_activity = bool(
+            await loop.run_in_executor(
+                None, functools.partial(event_log.recent, 1, events=ACTIVITY_EVENTS)
+            )
+        )
+        if request.method == "GET":
+            latest = await loop.run_in_executor(None, functools.partial(summary_log.recent, 1))
+            if latest:
+                record = latest[0]
+                ts = str(record.get("ts") or "")
+                profiles = record.get("profiles")
+                return JSONResponse(
+                    {
+                        "generated_at": ts or None,
+                        "stale": _summary_is_stale(ts),
+                        "has_activity": has_activity,
+                        "profiles": profiles if isinstance(profiles, list) else [],
+                    }
+                )
+            # Nothing saved yet → "stale" (worth generating) only if there's activity to review.
+            return JSONResponse(
+                {
+                    "generated_at": None,
+                    "stale": has_activity,
+                    "has_activity": has_activity,
+                    "profiles": [],
+                }
+            )
+
+        # POST: generate a fresh summary and persist one timestamped run.
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        raw_limit = body.get("limit") if isinstance(body, dict) else None
+        limit = _parse_activity_limit(
+            str(raw_limit) if raw_limit is not None else str(SUMMARY_LIMIT_DEFAULT)
+        )
+        events = await loop.run_in_executor(
+            None, functools.partial(event_log.recent, limit, events=ACTIVITY_EVENTS)
+        )
+        if not events:
+            # No activity to summarize — skip the LLM and don't record an empty run.
+            return JSONResponse(
+                {"generated_at": None, "stale": False, "has_activity": False, "profiles": []}
+            )
+        ages = {name: rt.age for name, rt in _pm.snapshot().items()}
+        system_prompt = (
+            "You are reviewing a child's recent web browsing for their parent or guardian. For "
+            "EACH profile in the activity below, write a short, factual review. Reply with ONLY a "
+            'JSON object {"profiles":[{"profile","summary","trends","attention"}]} where summary '
+            "is 1-3 plain sentences and trends/attention are arrays of short phrases. Include a "
+            'profile only if it has activity. Under "attention" call out: repeated attempts to '
+            "reach blocked sites; risky or age-inappropriate content; new or unusual sites; "
+            "browsing at late-night / unusual hours; and anything else a guardian should notice. "
+            "Use empty arrays when nothing applies. Be concise and factual; never invent activity "
+            "that isn't listed."
+        )
+        try:
+            raw = await asyncio.wait_for(
+                classifier.generate(
+                    system_prompt=system_prompt, user_prompt=_activity_digest(events, ages)
+                ),
+                timeout=config.classify_timeout_s,
+            )
+        except Exception:  # noqa: BLE001 - best-effort; the dashboard keeps the prior summary
+            return JSONResponse({"error": "summary generation failed"}, status_code=502)
+        profiles = _parse_activity_summary(raw)["profiles"]
+        generated_at = datetime.now(UTC).isoformat()
+        await loop.run_in_executor(
+            None,
+            functools.partial(
+                summary_log.log,
+                "activity_summary",
+                event_count=len(events),
+                period_hours=SUMMARY_STALE_AFTER_S // 3600,
+                profiles=profiles,
+            ),
+        )
+        return JSONResponse(
+            {
+                "generated_at": generated_at,
+                "stale": False,
+                "has_activity": True,
+                "profiles": profiles,
+            }
+        )
+
+    async def review_activity_summaries(request: Request) -> JSONResponse:
+        # Activity-page "Summaries" tab: the saved summary runs, newest first. PIN-gated, no LLM.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        limit = _parse_activity_limit(request.query_params.get("limit"))
+        loop = asyncio.get_running_loop()
+        runs = await loop.run_in_executor(None, functools.partial(summary_log.recent, limit))
+        return JSONResponse({"summaries": runs})
+
     def _resolve_parent_profile(name: str) -> ProfileRuntime | None:
         """Pick the profile a parent list write targets.
 
@@ -1489,6 +1723,16 @@ def create_app(
                 "/review/activity/suggest-rules",
                 review_activity_suggest_rules,
                 methods=["POST"],
+            ),
+            Route(
+                "/review/activity/summary",
+                review_activity_summary,
+                methods=["GET", "POST"],
+            ),
+            Route(
+                "/review/activity/summaries",
+                review_activity_summaries,
+                methods=["GET"],
             ),
             Route("/review/prompt", review_prompt, methods=["GET", "POST"]),
             Route("/settings/pin", settings_change_pin, methods=["POST"]),
