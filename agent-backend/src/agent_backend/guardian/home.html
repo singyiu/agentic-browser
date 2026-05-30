@@ -12,7 +12,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-180.png" />
     <link rel="stylesheet" href="/static/aegis-tokens.css?v=2" />
     <link rel="stylesheet" href="/static/aegis-components.css?v=4" />
-    <link rel="stylesheet" href="/static/aegis-shell.css?v=8" />
+    <link rel="stylesheet" href="/static/aegis-shell.css?v=9" />
   </head>
   <body>
     <!-- Parent PIN gate: shown until the parent unlocks (the page is only ever
@@ -161,6 +161,25 @@
                   </svg>
                 </span>
                 <span class="nav-item__label">Guard</span>
+              </a>
+            </li>
+            <li>
+              <a id="nav-time" class="nav-item" href="#/time">
+                <span class="nav-item__icon">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2" />
+                  </svg>
+                </span>
+                <span class="nav-item__label">Screen time</span>
               </a>
             </li>
             <li>
@@ -621,6 +640,54 @@
               </button>
             </div>
           </section>
+
+          <section
+            id="sec-time"
+            class="shell-section"
+            tabindex="-1"
+            aria-label="Screen time"
+            hidden
+          >
+            <h1>Screen time</h1>
+            <div class="card">
+              <label class="settings-field" for="time-profile">Profile</label>
+              <select id="time-profile" class="wl-profile-select"></select>
+              <p id="time-active" class="muted">…</p>
+            </div>
+
+            <div class="card">
+              <h2>Describe the limits</h2>
+              <p class="muted">
+                Write the rules in plain language and let the AI fill in the
+                form, or edit the form below directly.
+              </p>
+              <textarea
+                id="time-nl"
+                rows="3"
+                placeholder="e.g. 2 hours on school days, 4 hours on weekends, no browsing after 9pm, and Khan Academy doesn't count."
+              ></textarea>
+              <div class="time-actions">
+                <button id="time-parse" class="ghost" type="button">
+                  ✨ Parse with AI
+                </button>
+              </div>
+              <p id="time-parse-hint" class="hint" aria-live="polite"></p>
+            </div>
+
+            <div id="time-form"></div>
+
+            <div class="time-actions time-save-row">
+              <button id="time-save" class="primary" type="button">
+                Save limits
+              </button>
+              <p id="time-save-hint" class="hint" aria-live="polite"></p>
+            </div>
+
+            <div class="card">
+              <h2>Today's usage</h2>
+              <div id="time-usage"><p class="muted">…</p></div>
+            </div>
+          </section>
         </div>
       </main>
     </div>
@@ -631,7 +698,9 @@
     <script src="/static/rules.js?v=2"></script>
     <script src="/static/activity.js?v=2"></script>
     <script src="/static/summary.js?v=1"></script>
-    <script src="/static/shell.js?v=8"></script>
+    <script src="/static/time-core.js?v=1"></script>
+    <script src="/static/shell.js?v=9"></script>
     <script src="/static/profiles.js"></script>
+    <script src="/static/time.js?v=1"></script>
   </body>
 </html>

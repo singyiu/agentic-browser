@@ -101,6 +101,7 @@
     "requests",
     "activity",
     "whitelist",
+    "time",
     "settings",
   ];
 
@@ -1472,6 +1473,7 @@
       setActivityTab("timeline"); // always land on the timeline; Summaries is opt-in per visit
       loadActivity();
     } else if (key === "whitelist") loadLists();
+    else if (key === "time" && Aegis.loadTime) Aegis.loadTime();
     // "settings" is a static form — nothing to fetch.
   }
 
