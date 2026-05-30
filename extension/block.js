@@ -5,6 +5,8 @@ const blockedUrl = params.get("url");
 // Search mode: a blocked search query rather than a blocked page (kind=search&query=...).
 const searchQuery = params.get("query") || "";
 const isSearch = params.get("kind") === "search" && !!searchQuery;
+// Time-limit / bedtime block: the kid asks a parent for more time rather than to unblock a URL.
+const isTime = params.get("kind") === "timelimit";
 if (reason) document.getElementById("reason").textContent = reason;
 if (blockedUrl) document.getElementById("url").textContent = blockedUrl;
 if (isSearch) {
@@ -12,6 +14,21 @@ if (isSearch) {
   const heading = document.querySelector("h1");
   if (heading) heading.textContent = "This search isn't allowed";
   document.getElementById("reason").textContent = searchQuery;
+}
+if (isTime) {
+  const heading = document.querySelector("h1");
+  if (heading) {
+    heading.textContent = /bedtime/i.test(reason || "")
+      ? "It's bedtime"
+      : "Time's up";
+  }
+  const requestBtnEl = document.getElementById("request-btn");
+  if (requestBtnEl) requestBtnEl.textContent = "Request more time";
+  const noteFieldEl = document.getElementById("note");
+  if (noteFieldEl) {
+    noteFieldEl.placeholder =
+      "Optional: tell your parent why you need more time";
+  }
 }
 document.getElementById("back").addEventListener("click", () => history.back());
 
@@ -46,10 +63,12 @@ function showCheckUi() {
 }
 
 async function statusFor(cfg) {
-  // In search mode, poll the keyword request by query; otherwise the URL access-request.
-  const path = isSearch
-    ? `/search-request?query=${encodeURIComponent(searchQuery)}`
-    : `/access-request?url=${encodeURIComponent(blockedUrl)}`;
+  // Time mode polls the per-profile time request; search polls by query; else the URL request.
+  const path = isTime
+    ? `/time-request`
+    : isSearch
+      ? `/search-request?query=${encodeURIComponent(searchQuery)}`
+      : `/access-request?url=${encodeURIComponent(blockedUrl)}`;
   const resp = await fetch(`${cfg.endpoint}${path}`, {
     headers: { "X-Guardian-Token": cfg.token },
   });
@@ -63,10 +82,16 @@ async function submitRequest() {
   setStatus("Sending…");
   try {
     const cfg = await getConfig();
-    const path = isSearch ? "/search-request" : "/access-request";
-    const payload = isSearch
-      ? { query: searchQuery, url: blockedUrl, note: noteEl.value.trim() }
-      : { url: blockedUrl, reason: reason || "", note: noteEl.value.trim() };
+    const path = isTime
+      ? "/time-request"
+      : isSearch
+        ? "/search-request"
+        : "/access-request";
+    const payload = isTime
+      ? { reason: noteEl.value.trim() }
+      : isSearch
+        ? { query: searchQuery, url: blockedUrl, note: noteEl.value.trim() }
+        : { url: blockedUrl, reason: reason || "", note: noteEl.value.trim() };
     const resp = await fetch(`${cfg.endpoint}${path}`, {
       method: "POST",
       headers: {

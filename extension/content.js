@@ -91,8 +91,152 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
+  if (message.type === "UPDATE_TIME_HUD") {
+    updateHud(message.state);
+    sendResponse({ ok: true });
+    return true;
+  }
   return false;
 });
+
+/* --- In-page time HUD ------------------------------------------------------------------------
+   A small fixed pill showing the kid's remaining general screen-time, plus per-site credits when
+   the current site has its own rule. Click to expand a panel with a "Request more time" button.
+   Inline-styled (CSP-safe on any page) and hidden entirely when no time limit is configured.
+   State is pushed by the service worker via UPDATE_TIME_HUD (per navigation + every 30s). */
+
+const HUD_ID = "__guardian_time_hud";
+let hudRefs = null;
+
+function fmtRemaining(ms) {
+  const min = Math.max(0, Math.round((ms || 0) / 60000));
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h && m) return h + "h " + m + "m";
+  if (h) return h + "h";
+  return m + "m";
+}
+
+function buildHud() {
+  if (hudRefs) return hudRefs;
+  const root = document.createElement("div");
+  root.id = HUD_ID;
+  root.style.cssText =
+    "position:fixed;right:16px;bottom:16px;z-index:2147483646;" +
+    "font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;";
+
+  const pill = document.createElement("button");
+  pill.type = "button";
+  pill.setAttribute("aria-expanded", "false");
+  pill.style.cssText =
+    "display:inline-flex;align-items:center;gap:6px;border:none;cursor:pointer;" +
+    "border-radius:999px;padding:8px 14px;font-size:13px;font-weight:600;color:#faf5ed;" +
+    "background:#4a3f35;box-shadow:0 2px 10px rgba(0,0,0,.25);";
+
+  const panel = document.createElement("div");
+  panel.hidden = true;
+  panel.style.cssText =
+    "margin-top:8px;width:260px;background:#faf5ed;color:#3c3228;border:1px solid #e4d9c8;" +
+    "border-radius:14px;padding:14px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:13px;";
+
+  const general = document.createElement("p");
+  general.style.cssText = "margin:0 0 8px;font-weight:600;";
+  const siteLine = document.createElement("p");
+  siteLine.style.cssText = "margin:0 0 8px;color:#6b5d4d;";
+
+  const reason = document.createElement("input");
+  reason.type = "text";
+  reason.maxLength = 200;
+  reason.placeholder = "Why do you need more time?";
+  reason.style.cssText =
+    "width:100%;box-sizing:border-box;margin-bottom:8px;padding:7px 9px;" +
+    "border:1px solid #e4d9c8;border-radius:8px;font-size:13px;";
+
+  const ask = document.createElement("button");
+  ask.type = "button";
+  ask.textContent = "Request more time";
+  ask.style.cssText =
+    "width:100%;border:none;cursor:pointer;border-radius:8px;padding:8px;font-size:13px;" +
+    "font-weight:600;color:#faf5ed;background:#c0563a;";
+
+  const status = document.createElement("p");
+  status.style.cssText = "margin:8px 0 0;color:#6b5d4d;min-height:1em;";
+
+  panel.append(general, siteLine, reason, ask, status);
+  root.append(pill, panel);
+  (document.documentElement || document.body).appendChild(root);
+
+  pill.addEventListener("click", () => {
+    const open = panel.hidden;
+    panel.hidden = !open;
+    pill.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  ask.addEventListener("click", async () => {
+    ask.disabled = true;
+    status.textContent = "Sending…";
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: "TIME_REQUEST",
+        reason: reason.value.trim(),
+      });
+      if (res && res.ok) {
+        status.textContent = "Sent! Ask your parent to approve it.";
+      } else {
+        status.textContent = "Couldn't send — try again later.";
+        ask.disabled = false;
+      }
+    } catch (_e) {
+      status.textContent = "Couldn't reach the guardian.";
+      ask.disabled = false;
+    }
+  });
+
+  hudRefs = { root, pill, panel, general, siteLine };
+  return hudRefs;
+}
+
+function updateHud(state) {
+  const g = state && state.general;
+  // No general limit configured -> don't clutter the page.
+  if (!g || g.limit_ms == null) {
+    if (hudRefs) hudRefs.root.style.display = "none";
+    return;
+  }
+  const h = buildHud();
+  h.root.style.display = "block";
+  const remaining = g.remaining_ms == null ? 0 : g.remaining_ms;
+  h.pill.textContent = "⏳ " + fmtRemaining(remaining) + " left";
+  // Urgency colour: red under 5 min, amber under 15, calm otherwise.
+  h.pill.style.background =
+    remaining <= 5 * 60000
+      ? "#c0563a"
+      : remaining <= 15 * 60000
+        ? "#b8893a"
+        : "#4a3f35";
+  h.general.textContent =
+    "General: " +
+    fmtRemaining(remaining) +
+    " left of " +
+    fmtRemaining(g.limit_ms) +
+    " today";
+  const site = state.site;
+  if (site && site.host && !state.bedtime?.active) {
+    if (site.excluded) {
+      h.siteLine.textContent = "This site doesn't count against your time.";
+    } else if (site.limit_ms != null) {
+      h.siteLine.textContent =
+        "This site: " +
+        fmtRemaining(site.remaining_ms) +
+        " left of " +
+        fmtRemaining(site.limit_ms);
+    } else {
+      h.siteLine.textContent = "";
+    }
+  } else {
+    h.siteLine.textContent = "";
+  }
+  h.siteLine.style.display = h.siteLine.textContent ? "block" : "none";
+}
 
 /* --- Kid-safe search enforcement -------------------------------------------------------------
    Intercept search/prompt submissions in-page — traditional search boxes AND AI-chat inputs on
