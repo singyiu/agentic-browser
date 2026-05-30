@@ -58,6 +58,11 @@ async function blockTab(tabId, reason, pageUrl, opts = {}) {
     `&url=${encodeURIComponent(pageUrl || "")}`;
   if (opts.kind === "search") {
     params += `&kind=search&query=${encodeURIComponent(opts.query || "")}`;
+  } else if (opts.kind === "timelimit") {
+    // Without this the block page falls back to the URL access-request flow ("Request access"),
+    // so approving it whitelists the page instead of granting time — and the kid stays blocked.
+    params += `&kind=timelimit`;
+    if (opts.tl) params += `&tl=${encodeURIComponent(opts.tl)}`;
   }
   const blockUrl = chrome.runtime.getURL("block.html") + params;
   try {
