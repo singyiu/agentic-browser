@@ -753,14 +753,12 @@
   flex-wrap: wrap;
   gap: var(--space-1);
   margin: var(--space-4) 0;
-  border-bottom: 1px solid var(--border-1);
 }
 .act-tab {
   appearance: none;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
   padding: var(--space-2) var(--space-3);
   font: inherit;
   font-weight: var(--weight-medium);
