@@ -469,6 +469,17 @@
 #sec-activity .suggestion-reason {
   margin: var(--space-2) 0;
 }
+/* Standing "AI reviewed, nothing new" state — replaces the easy-to-miss toast. */
+#sec-activity .suggestions-empty {
+  text-align: center;
+}
+#sec-activity .suggestions-empty-title {
+  margin: 0 0 var(--space-2);
+  font-weight: var(--weight-semibold);
+}
+#sec-activity .suggestions-empty-body {
+  margin: 0;
+}
 
 /* ---------- Whitelist ---------- */
 .wl-add {

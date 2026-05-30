@@ -1147,8 +1147,23 @@
   function renderSuggestions(suggestions) {
     const panel = $("act-suggestions");
     if (!suggestions.length) {
-      panel.replaceChildren();
-      toast("No new suggestions.");
+      // The AI ran but proposed nothing new. A 3s toast was too easy to miss (it read as
+      // "nothing happened"), so render a standing card right where suggestions would appear.
+      // role=status announces it to screen readers when it replaces the panel contents.
+      panel.replaceChildren(
+        el(
+          "div",
+          { class: "card suggestions-empty", role: "status" },
+          el("p", {
+            class: "suggestions-empty-title",
+            text: "No new rules to suggest",
+          }),
+          el("p", {
+            class: "muted suggestions-empty-body",
+            text: "Your existing rules already cover what's in recent activity. Try again after more browsing, or use + Rule on any item to add a rule yourself.",
+          }),
+        ),
+      );
       return;
     }
     panel.replaceChildren(
