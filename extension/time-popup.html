@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Screen time</title>
+    <!-- Toolbar-button popup. Extension page (default MV3 CSP): inline <style> is allowed,
+         scripts must be external (time-popup.js). -->
+    <style>
+      :root {
+        --cream: #faf5ed;
+        --cocoa: #3c3228;
+        --stone: #6b5d4d;
+        --sand: #e4d9c8;
+        --terra: #c0563a;
+        --sage: #3f7a4f;
+        --ochre: #b8893a;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        width: 300px;
+        box-sizing: border-box;
+        padding: 14px;
+        background: var(--cream);
+        color: var(--cocoa);
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        font-size: 13px;
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0 0 10px;
+      }
+      .big {
+        font-size: 22px;
+        font-weight: 700;
+        margin: 0 0 2px;
+      }
+      .muted {
+        color: var(--stone);
+        margin: 0 0 10px;
+      }
+      .bar {
+        height: 8px;
+        border-radius: 999px;
+        background: var(--sand);
+        overflow: hidden;
+        margin: 8px 0 12px;
+      }
+      .bar > i {
+        display: block;
+        height: 100%;
+        background: var(--sage);
+      }
+      .bar.low > i {
+        background: var(--ochre);
+      }
+      .bar.full > i {
+        background: var(--terra);
+      }
+      .site {
+        background: #fff;
+        border: 1px solid var(--sand);
+        border-radius: 10px;
+        padding: 8px 10px;
+        margin-bottom: 12px;
+      }
+      .badge {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #efe6d6;
+        color: var(--stone);
+        margin-right: 6px;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid var(--sand);
+        border-radius: 8px;
+        padding: 7px 9px;
+        font: inherit;
+        resize: vertical;
+      }
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 8px;
+        padding: 9px;
+        margin-top: 8px;
+        font: inherit;
+        font-weight: 600;
+        color: var(--cream);
+        background: var(--terra);
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      #status {
+        color: var(--stone);
+        min-height: 1em;
+        margin: 8px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Screen time</h1>
+    <div id="body"><p class="muted">Loading…</p></div>
+    <script src="time-popup.js"></script>
+  </body>
+</html>

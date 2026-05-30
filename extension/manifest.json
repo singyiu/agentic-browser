@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Agentic Parental Control",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Classifies pages for a 10-year-old and blocks unsuitable content via the local guardian backend.",
   "minimum_chrome_version": "114",
   "icons": {
@@ -11,6 +11,16 @@
     "128": "icons/icon-128.png"
   },
   "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_title": "Screen time",
+    "default_popup": "time-popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],

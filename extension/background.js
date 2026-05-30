@@ -231,20 +231,45 @@ async function activeFocusedTab() {
   }
 }
 
+// Reflect the general pool's remaining minutes on the toolbar button (badge text + colour).
+// Browser-wide (one profile per browser), so a single global badge is correct; per-site detail
+// lives in the popup. Empty budget / no policy clears the badge.
+function updateActionBadge(state) {
+  if (!chrome.action) return;
+  const g = state && state.general;
+  if (!g || g.limit_ms == null) {
+    chrome.action.setBadgeText({ text: "" });
+    chrome.action.setTitle({ title: "Screen time" });
+    return;
+  }
+  const remMs = g.remaining_ms == null ? 0 : g.remaining_ms;
+  const remMin = Math.max(0, Math.round(remMs / 60000));
+  chrome.action.setBadgeText({ text: remMin > 99 ? "99+" : String(remMin) });
+  chrome.action.setBadgeBackgroundColor({
+    color:
+      remMs <= 5 * 60000
+        ? "#c0563a"
+        : remMs <= 15 * 60000
+          ? "#b8893a"
+          : "#3f7a4f",
+  });
+  chrome.action.setBadgeTextColor?.({ color: "#ffffff" });
+  chrome.action.setTitle({ title: `${remMin} min of screen time left today` });
+}
+
 // Periodic (30s alarm) heartbeat: bank the in-progress dwell so the budget is current, then
 // re-check the active tab — block it the moment the budget is spent (mid-session, not only on
-// the next navigation) and push the latest remaining time to the in-page HUD.
+// the next navigation) and refresh the toolbar badge.
 async function timeHeartbeat() {
   await flushPartial();
   const tab = await activeFocusedTab();
   if (!tab || !tab.id || shouldSkip(tab.url)) return;
   const state = await timeState(tab.url);
   if (!state) return;
+  updateActionBadge(state);
   if (state.blocked) {
     await blockTab(tab.id, timeReason(state), tab.url, { kind: "timelimit" });
-    return;
   }
-  sendToTab(tab.id, { type: "UPDATE_TIME_HUD", state });
 }
 
 async function handleNavigation(tabId, url) {
@@ -256,11 +281,11 @@ async function handleNavigation(tabId, url) {
   // window. Excluded/educational hosts come back blocked=false, so they stay usable.
   const tState = await timeState(url);
   if (tState) {
+    updateActionBadge(tState);
     if (tState.blocked) {
       await blockTab(tabId, timeReason(tState), url, { kind: "timelimit" });
       return;
     }
-    sendToTab(tabId, { type: "UPDATE_TIME_HUD", state: tState });
   }
 
   // Search-keyword gate: when this navigation is a search, judge the QUERY first. A blocked
