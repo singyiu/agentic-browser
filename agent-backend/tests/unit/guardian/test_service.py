@@ -1083,6 +1083,81 @@ def test_suggest_block_rule_strips_and_caps_output(tmp_path: Path) -> None:
     assert len(rule) <= 300
 
 
+# --- review activity suggest-rule (single activity item, PIN-gated, read-only) ---
+
+
+def test_activity_suggest_rule_503_when_pin_unset(tmp_path: Path) -> None:
+    resp = _client(FakeClassifier(Verdict("allow")), parent_pin="").post(
+        "/review/activity/suggest-rule",
+        json={"url": "https://www.badsite.test/x"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 503
+
+
+def test_activity_suggest_rule_403_wrong_pin(tmp_path: Path) -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).post(
+        "/review/activity/suggest-rule",
+        json={"url": "https://www.badsite.test/x"},
+        headers={"X-Guardian-Parent-Pin": "wrong"},
+    )
+    assert resp.status_code == 403
+
+
+def test_activity_suggest_rule_missing_url_422(tmp_path: Path) -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).post(
+        "/review/activity/suggest-rule", json={}, headers=_PIN
+    )
+    assert resp.status_code == 422
+
+
+def test_activity_suggest_rule_returns_rule(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("allow"), rule_result="Block social-media video sites.")
+    resp = _client(fake).post(
+        "/review/activity/suggest-rule",
+        json={"url": "https://www.badsite.test/watch?v=1", "event": "block"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"rule": "Block social-media video sites."}
+    assert fake.generate_calls == 1
+    # The host reaches the model (the prompt itself asks it not to name the site).
+    assert "badsite.test" in fake.generate_user_prompt
+
+
+def test_activity_suggest_rule_502_on_classifier_error(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("allow"), rule_result=RuntimeError("transport boom"))
+    resp = _client(fake).post(
+        "/review/activity/suggest-rule",
+        json={"url": "https://www.badsite.test/x"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 502
+
+
+def test_activity_suggest_rule_502_on_empty_output(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("allow"), rule_result="   \n  ")
+    resp = _client(fake).post(
+        "/review/activity/suggest-rule",
+        json={"url": "https://www.badsite.test/x"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 502
+
+
+def test_activity_suggest_rule_strips_and_caps_output(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("allow"), rule_result="  " + "y" * 400 + "  ")
+    resp = _client(fake).post(
+        "/review/activity/suggest-rule",
+        json={"url": "https://www.badsite.test/x"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    rule = resp.json()["rule"]
+    assert rule == rule.strip()
+    assert len(rule) <= 300
+
+
 # --- reject + optional block rule / hard-block (scoped) ---
 
 

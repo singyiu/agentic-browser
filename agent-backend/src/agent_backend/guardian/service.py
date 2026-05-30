@@ -874,6 +874,55 @@ def create_app(
         event_log.log("suggest_block_rule", id=request_id, profile=owner.name, kind=existing.kind)
         return JSONResponse({"rule": rule})
 
+    async def review_activity_suggest_rule(request: Request) -> JSONResponse:
+        # Draft a natural-language "block similar content" rule from one Activity item (a browsed
+        # URL), feeding the Activity-page rule builder's "AI-suggested" kind. PIN-gated, READ-ONLY,
+        # best-effort: mirrors review_suggest_block_rule but is seeded by {url} (an activity row)
+        # rather than a stored access-request id, so it needs no request lookup.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        url = str(body.get("url", "")).strip()
+        if not url:
+            return JSONResponse({"error": "url required"}, status_code=422)
+
+        # Age tunes the prompt; an unresolved/ambiguous profile just falls back to the default.
+        rt = _resolve_parent_profile(str(body.get("profile", "")).strip())
+        age = rt.age if rt is not None else DEFAULT_AGE
+        host = extract_host(url) or url
+        event = str(body.get("event", "")).strip()
+        outcome = "was blocked" if event in ("block", "blocklist_block") else "was visited"
+
+        system_prompt = (
+            "You help a guardian write a short content-blocking rule. Reply with ONLY 1-2 plain "
+            "sentences naming the CATEGORY of content to block for similar sites. Do not name the "
+            "specific site or URL. Start with 'Block'. Keep it under 200 characters."
+        )
+        user_prompt = (
+            f"Child age: {age}\n"
+            f"Site: {host}\n"
+            f"This page {outcome}; the guardian wants to block similar content going forward.\n\n"
+            "Describe the category of websites to block."
+        )
+        try:
+            raw = await asyncio.wait_for(
+                classifier.generate(system_prompt=system_prompt, user_prompt=user_prompt),
+                timeout=config.classify_timeout_s,
+            )
+        except Exception:  # noqa: BLE001 - best-effort; the builder degrades to manual entry
+            return JSONResponse({"error": "rule generation failed"}, status_code=502)
+        rule = raw.strip()[:300]
+        if not rule:
+            return JSONResponse({"error": "empty rule"}, status_code=502)
+        event_log.log(
+            "activity_suggest_rule", host=host, profile=(rt.name if rt is not None else "")
+        )
+        return JSONResponse({"rule": rule})
+
     def _resolve_parent_profile(name: str) -> ProfileRuntime | None:
         """Pick the profile a parent list write targets.
 
@@ -1302,6 +1351,11 @@ def create_app(
                 methods=["GET", "POST", "DELETE"],
             ),
             Route("/review/activity", review_activity, methods=["GET"]),
+            Route(
+                "/review/activity/suggest-rule",
+                review_activity_suggest_rule,
+                methods=["POST"],
+            ),
             Route("/review/prompt", review_prompt, methods=["GET", "POST"]),
             Route("/settings/pin", settings_change_pin, methods=["POST"]),
             Route("/profiles", profiles_endpoint, methods=["GET", "POST"]),
