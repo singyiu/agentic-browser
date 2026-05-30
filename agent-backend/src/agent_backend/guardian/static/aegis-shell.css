@@ -351,6 +351,85 @@
   align-items: center;
 }
 
+/* ---------- Activity: build-a-rule + AI suggestions ---------- */
+#sec-activity .add-rule {
+  margin-left: auto; /* push to the far right of the row */
+  font-size: var(--size-sm);
+  white-space: nowrap;
+}
+#sec-activity .rule-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  background: var(--bg-1);
+}
+#sec-activity .entry-label {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--fg-2);
+  font-size: var(--size-sm);
+}
+#sec-activity .rule-box {
+  width: 100%;
+  min-height: 3rem;
+  resize: vertical;
+}
+#sec-activity .rule-box:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+#sec-activity .suggest-rule {
+  align-self: flex-start;
+  font-size: var(--size-sm);
+}
+#sec-activity .rule-kinds,
+#sec-activity .rule-profiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  color: var(--fg-2);
+  font-size: var(--size-sm);
+}
+#sec-activity .rule-kind,
+#sec-activity .rule-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+#sec-activity .rule-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+#sec-activity .rule-hint {
+  font-size: var(--size-sm);
+}
+#sec-activity .suggestions-title {
+  margin: var(--space-2) 0;
+  font-size: var(--size-lg);
+}
+#sec-activity .suggestion {
+  margin-bottom: var(--space-3);
+}
+#sec-activity .suggestion-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+#sec-activity .suggestion-value {
+  font-family: var(--font-mono);
+  font-size: var(--size-sm);
+  word-break: break-all;
+}
+#sec-activity .suggestion-reason {
+  margin: var(--space-2) 0;
+}
+
 /* ---------- Whitelist ---------- */
 .wl-add {
   display: flex;

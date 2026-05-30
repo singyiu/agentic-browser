@@ -20,6 +20,14 @@
   let _forceRender = false; // set by decide() so a resolved card leaves even with its note open
   let _wlCount = 0; // last-known whitelist size, for the dashboard tile across store re-renders
 
+  // Activity-page rule builder (pure logic in rules.js, loaded before this file). If it failed to
+  // load, AR is null and the Activity page stays read-only — the +Rule / Suggest-rules affordances
+  // simply don't appear, the rest of the dashboard is unaffected.
+  const AR = window.AegisRules || null;
+  let _openRuleBuilder = null; // the single inline builder currently expanded (one open at a time)
+  let _ruleBuilderSeq = 0; // unique radio-group names so multiple builders never collide
+  let _actProfiles = []; // profiles cached from the last load, for the builder's checkboxes
+
   const $ = (id) => document.getElementById(id);
 
   function el(tag, props = {}, ...children) {
@@ -838,7 +846,7 @@
           text: target,
         })
       : el("span", { class: "url", text: target });
-    return el(
+    const row = el(
       "div",
       { class: "recent-row" },
       el("span", { class: "badge " + v.badge, text: v.label }),
@@ -851,11 +859,313 @@
       link,
       el("span", { class: "muted", text: timeAgo(ev.ts) }),
     );
+    // Without rules.js the page stays read-only (graceful degrade — no +Rule affordance).
+    if (!AR) return row;
+    const item = el("div", { class: "activity-item" }, row);
+    const addBtn = el("button", {
+      class: "ghost add-rule",
+      type: "button",
+      text: "+ Rule",
+    });
+    addBtn.addEventListener("click", () =>
+      toggleRuleBuilder(item, { seedEv: ev, seedKind: "exact" }),
+    );
+    row.append(addBtn);
+    return item;
+  }
+
+  // One POST to the existing per-profile blocklist endpoint; never throws (the caller tallies
+  // ok/fail per profile so a partial multi-profile apply can name the profiles that failed).
+  async function applyOneRule(payload) {
+    try {
+      const r = await api("/review/blocklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { profile: payload.profile, ok: r.ok };
+    } catch (_e) {
+      return { profile: payload.profile, ok: false };
+    }
+  }
+
+  function closeRuleBuilder() {
+    if (_openRuleBuilder) {
+      _openRuleBuilder.remove();
+      _openRuleBuilder = null;
+    }
+  }
+
+  // Open the inline builder inside `container` (an activity item or a suggestion card), closing
+  // any other open one first — only a single builder is ever expanded. A second click on the same
+  // trigger closes it (toggle).
+  function toggleRuleBuilder(container, opts) {
+    const openHere =
+      _openRuleBuilder && _openRuleBuilder.parentNode === container;
+    closeRuleBuilder();
+    if (openHere) return;
+    const wrap = buildRuleBuilder(opts);
+    container.append(wrap);
+    _openRuleBuilder = wrap;
+  }
+
+  // The reusable inline rule builder. `seedEv` is the source activity item (null for an AI
+  // suggestion); passing `seedValue` (a string) marks a suggestion-sourced builder whose text must
+  // not be auto-rewritten when the kind changes.
+  function buildRuleBuilder(opts) {
+    const seedEv = opts.seedEv || null;
+    const fromSuggestion = typeof opts.seedValue === "string";
+    const allowed = ["exact", "wildcard", "nl", "ai"];
+    let kind = allowed.includes(opts.seedKind) ? opts.seedKind : "nl";
+    let lastSeed = "";
+
+    const box = el("textarea", { class: "rule-box", rows: "2" });
+    if (fromSuggestion) {
+      box.value = opts.seedValue;
+    } else {
+      lastSeed = AR.seedValue(seedEv, kind);
+      box.value = lastSeed;
+    }
+
+    const hint = el("span", { class: "rule-hint error", hidden: true });
+    const setHint = (msg, show) => {
+      hint.textContent = msg || "";
+      hint.hidden = !show;
+    };
+
+    const genBtn = el("button", {
+      class: "ghost suggest-rule",
+      type: "button",
+      text: "✨ Generate suggestion",
+      hidden: kind !== "ai",
+    });
+    genBtn.addEventListener("click", async () => {
+      const url = (seedEv && (seedEv.url || seedEv.url_key)) || "";
+      if (!url) {
+        setHint("No link on this item to base a suggestion on.", true);
+        return;
+      }
+      genBtn.disabled = true;
+      const orig = genBtn.textContent;
+      genBtn.textContent = "Generating…";
+      let r;
+      try {
+        r = await api("/review/activity/suggest-rule", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url,
+            profile: seedEv.profile || "",
+            event: seedEv.event || "",
+          }),
+        });
+      } catch (_e) {
+        toast("Could not reach the guardian service.");
+        genBtn.disabled = false;
+        genBtn.textContent = orig;
+        return;
+      }
+      if (r.ok) {
+        const d = await r.json();
+        box.value = d.rule || "";
+        setHint("", false);
+      } else {
+        toast("Could not generate a rule (" + r.status + ").");
+      }
+      genBtn.disabled = false;
+      genBtn.textContent = orig;
+    });
+
+    const radioName = "rule-kind-" + _ruleBuilderSeq++;
+    const radios = AR.KINDS.map((k) => {
+      const input = el("input", {
+        type: "radio",
+        name: radioName,
+        value: k.id,
+      });
+      input.checked = k.id === kind;
+      input.addEventListener("change", () => {
+        if (!input.checked) return;
+        kind = k.id;
+        genBtn.hidden = kind !== "ai";
+        // Re-derive the box only for an activity-sourced builder the user hasn't edited.
+        if (
+          !fromSuggestion &&
+          (box.value.trim() === "" || box.value === lastSeed)
+        ) {
+          lastSeed = AR.seedValue(seedEv, kind);
+          box.value = lastSeed;
+        }
+      });
+      return el(
+        "label",
+        { class: "rule-kind" },
+        input,
+        el("span", { text: " " + k.label }),
+      );
+    });
+
+    const profileWrap = el("div", { class: "rule-profiles" });
+    const checks = [];
+    for (const p of _actProfiles.filter((x) => !x.is_global)) {
+      const cb = el("input", { type: "checkbox", value: p.name });
+      if (seedEv && seedEv.profile === p.name) cb.checked = true;
+      checks.push(cb);
+      profileWrap.append(
+        el(
+          "label",
+          { class: "rule-profile" },
+          cb,
+          el("span", { text: " " + p.name }),
+        ),
+      );
+    }
+    const globalCb = el("input", { type: "checkbox", value: "global" });
+    checks.push(globalCb);
+    profileWrap.append(
+      el(
+        "label",
+        { class: "rule-profile" },
+        globalCb,
+        el("span", { text: " Global — all kids" }),
+      ),
+    );
+
+    const applyBtn = el("button", {
+      class: "primary apply-rule",
+      type: "button",
+      text: "Apply rule",
+    });
+    const dismissBtn = el("button", {
+      class: "ghost rule-dismiss",
+      type: "button",
+      text: "Dismiss",
+    });
+    dismissBtn.addEventListener("click", closeRuleBuilder);
+    applyBtn.addEventListener("click", async () => {
+      const selected = checks.filter((c) => c.checked).map((c) => c.value);
+      const payloads = AR.buildApplyPayloads(box.value, selected);
+      if (payloads.length === 0) {
+        const norm = AR.normalizeEntry(box.value);
+        setHint(norm.ok ? "Pick at least one profile." : norm.error, true);
+        return;
+      }
+      setHint("", false);
+      applyBtn.disabled = true;
+      const orig = applyBtn.textContent;
+      applyBtn.textContent = "Applying…";
+      const results = await Promise.all(payloads.map(applyOneRule));
+      applyBtn.disabled = false;
+      applyBtn.textContent = orig;
+      const okCount = results.filter((r) => r.ok).length;
+      const failed = results.filter((r) => !r.ok).map((r) => r.profile);
+      if (okCount) {
+        toast(
+          "Rule added to " +
+            okCount +
+            " profile" +
+            (okCount > 1 ? "s" : "") +
+            ".",
+        );
+      }
+      if (failed.length)
+        setHint("Could not apply for: " + failed.join(", ") + ".", true);
+      else closeRuleBuilder();
+    });
+
+    return el(
+      "div",
+      { class: "rule-wrap" },
+      el("label", { class: "entry-label", text: "New blocking rule" }),
+      el("div", { class: "rule-kinds" }, ...radios),
+      box,
+      genBtn,
+      el("label", { class: "entry-label", text: "Apply to:" }),
+      profileWrap,
+      hint,
+      el("div", { class: "rule-actions" }, applyBtn, dismissBtn),
+    );
+  }
+
+  // "Suggest rules": ask the AI to review recent activity + existing rules, then list its proposals
+  // as cards. Each card's "Use this rule" opens the builder pre-filled — the AI never writes a rule
+  // on its own (the guardian confirms via Apply).
+  async function suggestActivityRules() {
+    if (!AR) return;
+    const btn = $("act-suggest");
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = "Reviewing…";
+    const profile = $("act-profile").value;
+    let r;
+    try {
+      r = await api("/review/activity/suggest-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profile ? { profile } : {}),
+      });
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      btn.disabled = false;
+      btn.textContent = orig;
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = orig;
+    if (!r.ok) {
+      toast("Could not get suggestions (" + r.status + ").");
+      return;
+    }
+    const data = await r.json();
+    renderSuggestions(AR.normalizeSuggestions(data.suggestions || []));
+  }
+
+  function renderSuggestions(suggestions) {
+    const panel = $("act-suggestions");
+    if (!suggestions.length) {
+      panel.replaceChildren();
+      toast("No new suggestions.");
+      return;
+    }
+    panel.replaceChildren(
+      el("h2", { class: "suggestions-title", text: "Suggested rules" }),
+      ...suggestions.map(suggestionCard),
+    );
+  }
+
+  function suggestionCard(s) {
+    const card = el("div", { class: "card suggestion" });
+    const useBtn = el("button", {
+      class: "ghost use-rule",
+      type: "button",
+      text: "Use this rule",
+    });
+    useBtn.addEventListener("click", () =>
+      toggleRuleBuilder(card, {
+        seedEv: null,
+        seedKind: s.kind,
+        seedValue: s.value,
+      }),
+    );
+    card.append(
+      el(
+        "div",
+        { class: "suggestion-head" },
+        el("span", { class: "badge profile", text: s.kind }),
+        el("code", { class: "suggestion-value", text: s.value }),
+      ),
+      s.reason
+        ? el("p", { class: "muted suggestion-reason", text: s.reason })
+        : null,
+      useBtn,
+    );
+    return card;
   }
 
   async function populateActivityProfiles() {
     const profiles = await fetchProfiles();
     if (!profiles) return;
+    _actProfiles = profiles; // cached for the rule-builder's per-profile checkboxes
     const sel = $("act-profile");
     const prev = sel.value;
     const teens = profiles.filter((p) => !p.is_global).map((p) => p.name);
@@ -867,6 +1177,8 @@
   }
 
   async function loadActivity() {
+    closeRuleBuilder(); // a refresh / profile-change replaces the list; drop any open builder
+    if (AR) $("act-suggestions").replaceChildren();
     await populateActivityProfiles();
     const profile = $("act-profile").value;
     const qs = profile ? "?profile=" + encodeURIComponent(profile) : "";
@@ -1124,6 +1436,9 @@
     $("cp-reset").addEventListener("click", resetPrompt);
     $("act-profile").addEventListener("change", loadActivity);
     $("act-refresh").addEventListener("click", loadActivity);
+    // The AI "Suggest rules" button only works with rules.js loaded; hide it otherwise.
+    if (AR) $("act-suggest").addEventListener("click", suggestActivityRules);
+    else $("act-suggest").hidden = true;
     $("set-pin-btn").addEventListener("click", submitChangePin);
     $("set-pin-new").addEventListener("input", validatePinMatch);
     $("set-pin-confirm").addEventListener("input", validatePinMatch);
