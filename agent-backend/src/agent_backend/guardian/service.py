@@ -776,6 +776,67 @@ def create_app(
             metrics.record_access_decision("reject")
         return JSONResponse({"id": decided.id, "status": decided.status})
 
+    async def review_suggest_block_rule(request: Request) -> JSONResponse:
+        # Optional aid for the reject flow: draft a natural-language "block similar content"
+        # rule from a request's details. PIN-gated and READ-ONLY (no store mutation); strictly
+        # best-effort, so any failure here returns an error the UI can shrug off — it never
+        # blocks the guardian from rejecting.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        request_id = str(body.get("id", "")).strip()
+        if not request_id:
+            return JSONResponse({"error": "id required"}, status_code=422)
+
+        owner: ProfileRuntime | None = None
+        existing = None
+        for runtime in _pm.snapshot().values():
+            match = runtime.request_store.current().by_id(request_id)
+            if match is not None:
+                owner = runtime
+                existing = match
+                break
+        if owner is None or existing is None:
+            return JSONResponse({"error": "request not found"}, status_code=404)
+
+        system_prompt = (
+            "You help a guardian write a short content-blocking rule. Reply with ONLY 1-2 plain "
+            "sentences naming the CATEGORY of content to block for similar future requests. Do "
+            "not name the specific site or URL. Start with 'Block'. Keep it under 200 characters."
+        )
+        if existing.kind == "search":
+            user_prompt = (
+                f"A child (age {owner.age}) searched: {existing.keyword!r}\n"
+                f"Blocked reason: {existing.reason}\n"
+                f"Child note: {existing.note or '(none)'}\n\n"
+                "Describe the category of search topics to block going forward."
+            )
+        else:
+            user_prompt = (
+                f"Child age: {owner.age}\n"
+                f"Site: {existing.host}\n"
+                f"Blocked reason: {existing.reason}\n"
+                f"Child note: {existing.note or '(none)'}\n\n"
+                "Describe the category of websites to block going forward."
+            )
+
+        try:
+            raw = await asyncio.wait_for(
+                classifier.generate(system_prompt=system_prompt, user_prompt=user_prompt),
+                timeout=config.classify_timeout_s,
+            )
+        except Exception:  # noqa: BLE001 - best-effort; the reject path never depends on this
+            return JSONResponse({"error": "rule generation failed"}, status_code=502)
+        rule = raw.strip()[:300]
+        if not rule:
+            return JSONResponse({"error": "empty rule"}, status_code=502)
+        event_log.log("suggest_block_rule", id=request_id, profile=owner.name, kind=existing.kind)
+        return JSONResponse({"rule": rule})
+
     def _resolve_parent_profile(name: str) -> ProfileRuntime | None:
         """Pick the profile a parent list write targets.
 
@@ -1121,6 +1182,11 @@ def create_app(
             Route("/review", review_page, methods=["GET"]),
             Route("/review/requests", review_requests, methods=["GET"]),
             Route("/review/decision", review_decision, methods=["POST"]),
+            Route(
+                "/review/suggest-block-rule",
+                review_suggest_block_rule,
+                methods=["POST"],
+            ),
             Route("/review/whitelist", review_whitelist, methods=["GET", "POST", "DELETE"]),
             Route("/review/blocklist", review_blocklist, methods=["GET", "POST", "DELETE"]),
             Route(

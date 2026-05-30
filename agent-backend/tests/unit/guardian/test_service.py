@@ -50,12 +50,20 @@ def _config(parent_pin: str = "testpin", admin_path: str = ":memory:") -> Guardi
 
 
 class FakeClassifier:
-    def __init__(self, result: object, *, search_result: object = None) -> None:
+    def __init__(
+        self,
+        result: object,
+        *,
+        search_result: object = None,
+        rule_result: object = "Block similar content.",
+    ) -> None:
         self._result = result
         # Defaults to the page result so existing callers need no change; search tests pass it.
         self._search_result = search_result if search_result is not None else result
+        self._rule_result = rule_result
         self.calls = 0
         self.search_calls = 0
+        self.generate_calls = 0
 
     async def classify(
         self,
@@ -84,6 +92,14 @@ class FakeClassifier:
         if isinstance(self._search_result, Exception):
             raise self._search_result
         return self._search_result
+
+    async def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+        self.generate_calls += 1
+        self.generate_system_prompt = system_prompt
+        self.generate_user_prompt = user_prompt
+        if isinstance(self._rule_result, Exception):
+            raise self._rule_result
+        return self._rule_result  # type: ignore[return-value]
 
 
 class FakeCache:
@@ -953,6 +969,118 @@ def test_review_decision_rejects_non_printable_entry(tmp_path: Path) -> None:
         headers=_PIN,
     )
     assert resp.status_code == 422
+
+
+# --- review suggest-block-rule (PIN-gated, AI prose, read-only) ---
+
+
+def _seed_url_request(tmp_path: Path) -> tuple[RequestStore, str]:
+    rs = RequestStore(str(tmp_path / "req.json"))
+    req = rs.add_request(
+        url="https://www.badsite.test/x",
+        url_key="badsite:x",
+        host="badsite.test",
+        reason="adult content",
+        note="for homework",
+    )
+    return rs, req.id
+
+
+def test_suggest_block_rule_503_when_pin_unset(tmp_path: Path) -> None:
+    rs, rid = _seed_url_request(tmp_path)
+    resp = _client(FakeClassifier(Verdict("allow")), request_store=rs, parent_pin="").post(
+        "/review/suggest-block-rule", json={"id": rid}, headers=_PIN
+    )
+    assert resp.status_code == 503
+
+
+def test_suggest_block_rule_403_wrong_pin(tmp_path: Path) -> None:
+    rs, rid = _seed_url_request(tmp_path)
+    resp = _client(FakeClassifier(Verdict("allow")), request_store=rs).post(
+        "/review/suggest-block-rule",
+        json={"id": rid},
+        headers={"X-Guardian-Parent-Pin": "wrong"},
+    )
+    assert resp.status_code == 403
+
+
+def test_suggest_block_rule_missing_id_422(tmp_path: Path) -> None:
+    rs = RequestStore(str(tmp_path / "req.json"))
+    resp = _client(FakeClassifier(Verdict("allow")), request_store=rs).post(
+        "/review/suggest-block-rule", json={}, headers=_PIN
+    )
+    assert resp.status_code == 422
+
+
+def test_suggest_block_rule_unknown_id_404(tmp_path: Path) -> None:
+    rs = RequestStore(str(tmp_path / "req.json"))
+    resp = _client(FakeClassifier(Verdict("allow")), request_store=rs).post(
+        "/review/suggest-block-rule", json={"id": "req_nope"}, headers=_PIN
+    )
+    assert resp.status_code == 404
+
+
+def test_suggest_block_rule_returns_rule_for_url_request(tmp_path: Path) -> None:
+    rs, rid = _seed_url_request(tmp_path)
+    fake = FakeClassifier(Verdict("allow"), rule_result="Block websites showing adult material.")
+    resp = _client(fake, request_store=rs).post(
+        "/review/suggest-block-rule", json={"id": rid}, headers=_PIN
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"rule": "Block websites showing adult material."}
+    assert fake.generate_calls == 1
+    # The host/reason reach the model but the prompt asks it NOT to name the site.
+    assert "badsite.test" in fake.generate_user_prompt
+
+
+def test_suggest_block_rule_returns_rule_for_search_request(tmp_path: Path) -> None:
+    rs = RequestStore(str(tmp_path / "req.json"))
+    req = rs.add_request(
+        url="https://search.test/?q=porn",
+        url_key="search.test/",
+        host="search.test",
+        reason="adult search",
+        note="",
+        kind="search",
+        keyword="porn",
+    )
+    fake = FakeClassifier(Verdict("allow"), rule_result="Block searches for adult content.")
+    resp = _client(fake, request_store=rs).post(
+        "/review/suggest-block-rule", json={"id": req.id}, headers=_PIN
+    )
+    assert resp.status_code == 200
+    assert resp.json()["rule"] == "Block searches for adult content."
+    assert "porn" in fake.generate_user_prompt
+
+
+def test_suggest_block_rule_502_on_classifier_error(tmp_path: Path) -> None:
+    rs, rid = _seed_url_request(tmp_path)
+    fake = FakeClassifier(Verdict("allow"), rule_result=RuntimeError("transport boom"))
+    resp = _client(fake, request_store=rs).post(
+        "/review/suggest-block-rule", json={"id": rid}, headers=_PIN
+    )
+    assert resp.status_code == 502
+
+
+def test_suggest_block_rule_502_on_empty_output(tmp_path: Path) -> None:
+    rs, rid = _seed_url_request(tmp_path)
+    fake = FakeClassifier(Verdict("allow"), rule_result="   \n  ")
+    resp = _client(fake, request_store=rs).post(
+        "/review/suggest-block-rule", json={"id": rid}, headers=_PIN
+    )
+    assert resp.status_code == 502
+
+
+def test_suggest_block_rule_strips_and_caps_output(tmp_path: Path) -> None:
+    rs, rid = _seed_url_request(tmp_path)
+    fake = FakeClassifier(Verdict("allow"), rule_result="  " + "x" * 400 + "  ")
+    resp = _client(fake, request_store=rs).post(
+        "/review/suggest-block-rule", json={"id": rid}, headers=_PIN
+    )
+    assert resp.status_code == 200
+    rule = resp.json()["rule"]
+    assert rule == rule.strip()
+    assert len(rule) <= 300
 
 
 # --- multi-profile isolation (one backend, several teens) -------------------
