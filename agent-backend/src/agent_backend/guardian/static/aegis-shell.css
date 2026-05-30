@@ -912,3 +912,15 @@
   background: var(--aegis-pending-bg);
   color: var(--aegis-pending);
 }
+
+/* Time-extension request grant controls (Requests section) */
+.time-req-grants {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.time-req-custom {
+  width: 5.5rem;
+}

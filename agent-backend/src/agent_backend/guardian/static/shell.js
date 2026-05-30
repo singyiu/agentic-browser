@@ -36,6 +36,8 @@
   const ASUM = window.AegisSummary || null;
   let _summaryAutoTried = false; // auto-generate at most once per page session when stale
   let _summaryRefreshing = false; // re-entrancy guard for the Refresh button + auto-gen
+  const ATIME = window.AegisTime || null; // pure time shaping/formatting (time-core.js)
+  let _timePending = 0; // pending time-extension requests, folded into the sidebar badge
   let _actSummaries = []; // normalized history, cached for instant profile-filter re-render
 
   const $ = (id) => document.getElementById(id);
@@ -590,6 +592,7 @@
   function loadRequests() {
     if (AS) renderFromStore(); // instant paint from the latest poll, then refresh
     refreshRequests();
+    refreshTimeRequests();
   }
 
   // Single fetch path for the requests slice. Background polls and the post-decision refresh pass
@@ -886,6 +889,148 @@
     }
   }
 
+  /* ---------- Time-extension requests ---------- */
+  // Fetched alongside the access/search queue (own endpoint, not in the Redux store). Pending
+  // count folds into the sidebar badge so a backgrounded parent still notices.
+  async function refreshTimeRequests({ silent = false } = {}) {
+    let r;
+    try {
+      r = await api("/review/time-requests");
+    } catch (_e) {
+      if (!silent) toast("Could not reach the guardian service.");
+      return;
+    }
+    if (!r.ok) {
+      if (!silent && r.status !== 403)
+        toast("Could not load time requests (" + r.status + ").");
+      return;
+    }
+    const data = await r.json();
+    const pending = ATIME
+      ? ATIME.normalizeTimeRequests(data.pending || [])
+      : data.pending || [];
+    _timePending = pending.length;
+    const wrap = $("req-time");
+    if (wrap) wrap.hidden = pending.length === 0;
+    const list = $("req-time-list");
+    if (list) list.replaceChildren(...pending.map(timeRequestCard));
+    updateBadge(pendingTotal());
+  }
+
+  function timeRequestCard(req) {
+    const card = el("div", { class: "card" });
+    const meta = el(
+      "span",
+      { class: "meta" },
+      req.profile
+        ? el("span", { class: "badge profile", text: req.profile })
+        : null,
+      req.target_host
+        ? el("span", { class: "host", text: req.target_host })
+        : null,
+    );
+    const ask = req.requested_minutes
+      ? "Wants +" + req.requested_minutes + " min"
+      : "Wants more time";
+    card.append(
+      el(
+        "div",
+        { class: "head" },
+        el("span", { class: "url", text: ask }),
+        meta,
+      ),
+    );
+    if (req.reason)
+      card.append(el("p", { class: "reason", text: "Reason: " + req.reason }));
+    if (req.note)
+      card.append(el("p", { class: "note", text: "Note: " + req.note }));
+    card.append(el("p", { class: "muted", text: timeAgo(req.created_ts) }));
+
+    const grants = el("div", { class: "time-req-grants" });
+    for (const m of [15, 30, 60]) {
+      const b = el("button", {
+        class: "approve",
+        type: "button",
+        text: "+" + m + "m",
+      });
+      b.addEventListener("click", () =>
+        decideTime(req.id, req.profile, "approve", m),
+      );
+      grants.append(b);
+    }
+    const custom = el("input", {
+      type: "number",
+      min: "1",
+      max: "1440",
+      class: "time-req-custom",
+      "aria-label": "Custom minutes to grant",
+      placeholder: "min",
+    });
+    const customBtn = el("button", {
+      class: "ghost",
+      type: "button",
+      text: "Grant",
+    });
+    customBtn.addEventListener("click", () => {
+      const n = Math.round(Number(custom.value));
+      if (!Number.isFinite(n) || n < 1) {
+        toast("Enter how many minutes to grant.");
+        return;
+      }
+      decideTime(req.id, req.profile, "approve", Math.min(1440, n));
+    });
+    const deny = el("button", {
+      class: "reject",
+      type: "button",
+      text: "Deny",
+    });
+    deny.addEventListener("click", () =>
+      decideTime(req.id, req.profile, "reject", null),
+    );
+    grants.append(custom, customBtn, deny);
+    card.append(grants);
+    return card;
+  }
+
+  async function decideTime(id, profile, decision, grantedMinutes) {
+    const body = { id, profile, decision };
+    if (decision === "approve") body.granted_minutes = grantedMinutes;
+    let r;
+    try {
+      r = await api("/review/time-decision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (r.ok) {
+      toast(
+        decision === "approve"
+          ? "Granted +" + grantedMinutes + " min ✓"
+          : "Denied",
+      );
+      refreshTimeRequests({ silent: true });
+    } else {
+      toast("Action failed (" + r.status + ").");
+    }
+  }
+
+  // Sidebar badge total = pending access/search requests (store) + pending time requests.
+  function pendingTotal() {
+    let base = 0;
+    if (AS) {
+      try {
+        base = AS.selectors.pendingCount(AS.store.getState()) || 0;
+      } catch (_e) {
+        base = 0;
+      }
+    }
+    return base + _timePending;
+  }
+
   /* ---------- Pending-request badge + polling (Redux-driven) ---------- */
   // Subscribed to the store: refresh the sidebar count badge on every change, and re-render the
   // open Requests/Dashboard lists from store state. A poll never clobbers an in-progress review
@@ -893,7 +1038,7 @@
   function renderFromStore() {
     if (!AS) return;
     const s = AS.store.getState();
-    updateBadge(AS.selectors.pendingCount(s));
+    updateBadge(pendingTotal());
     // Only paint lists from settled, fresh data. On "loading"/"error" keep the last-good DOM
     // and, crucially, preserve _forceRender so a decision still flushes once a refresh succeeds
     // (otherwise a failed post-decision poll would strand the resolved card on screen).
@@ -936,6 +1081,7 @@
   function pollTick() {
     if (document.hidden) return; // paused while the tab is backgrounded
     refreshRequests({ silent: true });
+    refreshTimeRequests({ silent: true });
   }
 
   function startPolling({ immediate = true } = {}) {
@@ -955,6 +1101,7 @@
   function onVisibility() {
     if (!document.hidden && !$("app-shell").hidden) {
       refreshRequests({ silent: true });
+      refreshTimeRequests({ silent: true });
     }
   }
 

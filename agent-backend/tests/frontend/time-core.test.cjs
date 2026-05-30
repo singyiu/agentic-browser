@@ -10,6 +10,7 @@ const {
   normalizePolicy,
   policyIsEmpty,
   normalizeUsage,
+  normalizeTimeRequests,
   formatMinutes,
   formatMs,
 } = require("../../src/agent_backend/guardian/static/time-core.js");
@@ -112,4 +113,31 @@ test("formatMinutes", () => {
 test("formatMs converts to minutes", () => {
   assert.equal(formatMs(90000), "2m"); // 90s = 1.5min -> rounds to 2m
   assert.equal(formatMs(5400000), "1h 30m"); // 90 min
+});
+
+// ---- normalizeTimeRequests ------------------------------------------------
+
+test("normalizeTimeRequests shapes rows and drops id-less items", () => {
+  const out = normalizeTimeRequests([
+    { id: "treq_1", profile: "kid", requested_minutes: 30, reason: "homework", created_ts: "t" },
+    { profile: "kid", reason: "no id" },
+    { id: "treq_2", target_host: "g.com" },
+  ]);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0], {
+    id: "treq_1",
+    profile: "kid",
+    target_host: null,
+    requested_minutes: 30,
+    reason: "homework",
+    note: "",
+    created_ts: "t",
+  });
+  assert.equal(out[1].target_host, "g.com");
+  assert.equal(out[1].requested_minutes, null);
+});
+
+test("normalizeTimeRequests is total on garbage", () => {
+  assert.deepEqual(normalizeTimeRequests(null), []);
+  assert.deepEqual(normalizeTimeRequests("x"), []);
 });

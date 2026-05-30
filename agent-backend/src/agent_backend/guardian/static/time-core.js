@@ -155,6 +155,26 @@
     return formatMinutes((Number(ms) || 0) / 60000);
   }
 
+  // Shape the parent dashboard's pending time-requests into safe display rows. Drops items
+  // without an id; coerces strings; preserves order. (XSS is already handled by el({text}).)
+  function normalizeTimeRequests(arr) {
+    if (!Array.isArray(arr)) return [];
+    const out = [];
+    for (const r of arr) {
+      if (!r || typeof r !== "object" || !_str(r.id)) continue;
+      out.push({
+        id: _str(r.id),
+        profile: _str(r.profile),
+        target_host: _str(r.target_host) || null,
+        requested_minutes: _clampInt(r.requested_minutes, 0, MAX_MINUTES),
+        reason: _str(r.reason),
+        note: _str(r.note),
+        created_ts: _str(r.created_ts),
+      });
+    }
+    return out;
+  }
+
   const api = {
     WEEKDAYS,
     DAY_KEYS,
@@ -165,6 +185,7 @@
     normalizePolicy,
     policyIsEmpty,
     normalizeUsage,
+    normalizeTimeRequests,
     formatMinutes,
     formatMs,
   };
