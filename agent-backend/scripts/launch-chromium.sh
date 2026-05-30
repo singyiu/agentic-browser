@@ -27,24 +27,43 @@ if [ ! -x "$CHROME" ]; then
   exit 1
 fi
 
-# Hand the extension the backend token + endpoint (this file is git-ignored).
 # GUARDIAN_ENDPOINT lets this (browser) machine point at a guardian running on another
 # LAN host; the default is localhost, so a single-machine setup is unchanged.
 ENDPOINT="${GUARDIAN_ENDPOINT:-http://127.0.0.1:${GUARDIAN_PORT}}"
-printf '{"token":"%s","endpoint":"%s"}\n' \
-  "${GUARDIAN_TOKEN:-}" "$ENDPOINT" >"$EXT_DIR/guardian-config.json"
 
 mkdir -p "$(dirname "$CHROMIUM_LOG_FILE")"
 touch "$CHROMIUM_LOG_FILE"
 
-echo "Launching Chromium (CDP :$PORT) with the parental-control extension"
+# Extension loading has two modes:
+#   AEGIS_DEV_UNPACKED=1 -> developer load via --load-extension (live-editable, but the kid
+#       can toggle it off at chrome://extensions). The token config is written into the
+#       extension dir at launch, as before.
+#   default (locked)     -> the extension is FORCE-INSTALLED, force-pinned, and locked by the
+#       managed-preferences policy (scripts/install-extension-policy.sh), which installs it
+#       from the guardian's /ext/updates.xml. The token is baked into the CRX by
+#       scripts/pack-extension.sh, so nothing is loaded or written here.
+EXT_FLAGS=()
+POLICY_PLIST="/Library/Managed Preferences/org.chromium.Chromium.plist"
+if [ "${AEGIS_DEV_UNPACKED:-0}" = "1" ]; then
+  printf '{"token":"%s","endpoint":"%s"}\n' \
+    "${GUARDIAN_TOKEN:-}" "$ENDPOINT" >"$EXT_DIR/guardian-config.json"
+  EXT_FLAGS=(--load-extension="$EXT_DIR" --disable-extensions-except="$EXT_DIR")
+  echo "Launching Chromium (CDP :$PORT) — DEV unpacked extension (NOT locked)"
+else
+  echo "Launching Chromium (CDP :$PORT) — extension managed by enterprise policy"
+  if [ ! -f "$POLICY_PLIST" ]; then
+    echo "  NOTE: no managed policy at $POLICY_PLIST." >&2
+    echo "  Run scripts/pack-extension.sh, then: sudo bash scripts/install-extension-policy.sh" >&2
+    echo "  (or set AEGIS_DEV_UNPACKED=1 for a developer load)." >&2
+  fi
+fi
 echo "Guardian endpoint: $ENDPOINT"
 echo "Chromium log: $CHROMIUM_LOG_FILE"
+# ${EXT_FLAGS[@]+...} expands to nothing when the array is empty (safe under set -u).
 exec "$CHROME" \
   --remote-debugging-port="$PORT" \
   --user-data-dir="$PROFILE" \
-  --load-extension="$EXT_DIR" \
-  --disable-extensions-except="$EXT_DIR" \
+  ${EXT_FLAGS[@]+"${EXT_FLAGS[@]}"} \
   --enable-logging \
   --log-file="$CHROMIUM_LOG_FILE" \
   --v=0 \
