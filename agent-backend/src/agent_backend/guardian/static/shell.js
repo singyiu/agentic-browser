@@ -31,6 +31,12 @@
   let _openRuleTrigger = null; // the button that opened it, so its aria-expanded resets on close
   let _ruleBuilderSeq = 0; // unique radio-group names so multiple builders never collide
   let _actProfiles = []; // profiles cached from the last load, for the builder's checkboxes
+  // Activity-summary feature (dashboard panel + Summaries tab). ASUM does the safe shaping;
+  // absent -> the panel hides and the tab no-ops (graceful degrade, like AR/AA above).
+  const ASUM = window.AegisSummary || null;
+  let _summaryAutoTried = false; // auto-generate at most once per page session when stale
+  let _summaryRefreshing = false; // re-entrancy guard for the Refresh button + auto-gen
+  let _actSummaries = []; // normalized history, cached for instant profile-filter re-render
 
   const $ = (id) => document.getElementById(id);
 
@@ -126,6 +132,7 @@
     } catch (_e) {
       toast("Could not reach the guardian service.");
     }
+    loadActivitySummary(); // fire-and-forget; the AI panel has its own loading + error handling
   }
 
   // Re-render the dashboard tiles from current store state (called by the store subscriber).
@@ -166,6 +173,137 @@
       location.hash = hash;
     });
     return tile;
+  }
+
+  /* ---------- Dashboard: AI activity summary ---------- */
+  /* An AI-written per-profile review of recent activity. GET shows the saved summary; if it's
+     older than 48h (or missing) and there's activity, we auto-generate once per session. Refresh
+     regenerates on demand. summary.js (ASUM) does the safe shaping — this is DOM glue only. */
+  async function loadActivitySummary() {
+    if (!ASUM) {
+      $("dash-summary").hidden = true;
+      return;
+    }
+    let r;
+    try {
+      r = await api("/review/activity/summary");
+    } catch (_e) {
+      $("dash-summary-meta").textContent =
+        "Couldn't reach the guardian service.";
+      return;
+    }
+    if (!r.ok) {
+      $("dash-summary-meta").textContent = "Couldn't load the summary.";
+      return;
+    }
+    const norm = ASUM.normalizeSummary(await r.json());
+    renderDashboardSummary(norm);
+    if (norm.stale && norm.has_activity && !_summaryAutoTried) {
+      _summaryAutoTried = true; // auto-generate at most once per page session
+      refreshActivitySummary({ auto: true });
+    }
+  }
+
+  function renderDashboardSummary(norm) {
+    const meta = $("dash-summary-meta");
+    const body = $("dash-summary-body");
+    const updated = norm.generated_at
+      ? "Updated " + timeAgo(norm.generated_at)
+      : "";
+    if (!norm.has_activity) {
+      meta.textContent = "";
+      body.replaceChildren(
+        el("p", {
+          class: "muted",
+          text: "No recent activity to summarize yet.",
+        }),
+      );
+      return;
+    }
+    if (ASUM.summaryIsEmpty(norm)) {
+      meta.textContent = updated;
+      body.replaceChildren(
+        el("p", {
+          class: "muted",
+          text: norm.generated_at
+            ? "The last review found nothing notable."
+            : "No summary yet — generating one now…",
+        }),
+      );
+      return;
+    }
+    meta.textContent = updated;
+    body.replaceChildren(...norm.profiles.map(summaryProfileCard));
+  }
+
+  // One per-profile summary card (overview + optional Trends and "Worth a look" lists). Reused by
+  // the dashboard panel and the Activity "Summaries" tab. Every string goes through el({text}) so
+  // AI/teen content renders inert (no HTML injection).
+  function summaryProfileCard(p) {
+    const parts = [
+      el(
+        "div",
+        { class: "summary-profile__head" },
+        el("span", { class: "badge profile", text: p.profile }),
+      ),
+    ];
+    if (p.summary)
+      parts.push(el("p", { class: "summary-profile__text", text: p.summary }));
+    if (p.trends && p.trends.length)
+      parts.push(summarySection("Trends", p.trends));
+    if (p.attention && p.attention.length)
+      parts.push(summarySection("Worth a look", p.attention, "attention"));
+    return el("div", { class: "card summary-profile" }, ...parts);
+  }
+
+  function summarySection(label, items, modifier) {
+    return el(
+      "div",
+      {
+        class:
+          "summary-section" + (modifier ? " summary-section--" + modifier : ""),
+      },
+      el("p", { class: "summary-section__label", text: label }),
+      el(
+        "ul",
+        { class: "summary-section__list" },
+        ...items.map((t) => el("li", { text: t })),
+      ),
+    );
+  }
+
+  async function refreshActivitySummary(opts) {
+    const auto = !!(opts && opts.auto);
+    if (!ASUM || _summaryRefreshing) return;
+    _summaryRefreshing = true;
+    const btn = $("dash-summary-refresh");
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Refreshing…";
+    if (auto) $("dash-summary-meta").textContent = "Generating…";
+    let r;
+    try {
+      r = await api("/review/activity/summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      _summaryRefreshing = false;
+      btn.disabled = false;
+      btn.textContent = orig;
+      return;
+    }
+    _summaryRefreshing = false;
+    btn.disabled = false;
+    btn.textContent = orig;
+    if (!r.ok) {
+      toast("Could not generate summary (" + r.status + ").");
+      return;
+    }
+    renderDashboardSummary(ASUM.normalizeSummary(await r.json()));
+    if (!auto) toast("Summary updated.");
   }
 
   /* Allow & block lists — parent view via /review/whitelist + /review/blocklist, scoped to
@@ -1241,12 +1379,98 @@
     $("act-empty").hidden = events.length > 0;
   }
 
+  /* ---------- Activity tabs: Timeline | Summaries ---------- */
+  function setActivityTab(name) {
+    const timeline = name !== "summaries";
+    $("act-tab-timeline").hidden = !timeline;
+    $("act-tab-summaries").hidden = timeline;
+    $("act-tab-timeline-btn").setAttribute("aria-selected", String(timeline));
+    $("act-tab-summaries-btn").setAttribute("aria-selected", String(!timeline));
+    if (!timeline) loadActivitySummariesTab();
+  }
+
+  // The "Summaries" tab: saved summary runs, newest-first (server order). A profile selector
+  // narrows the per-profile cards across every run; the history is cached so filtering is instant.
+  async function loadActivitySummariesTab() {
+    if (!ASUM) return;
+    let r;
+    try {
+      r = await api("/review/activity/summaries");
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (!r.ok) {
+      toast("Could not load summaries (" + r.status + ").");
+      return;
+    }
+    _actSummaries = ASUM.normalizeHistory((await r.json()).summaries || []);
+    populateSummaryProfileFilter(_actSummaries);
+    renderActivitySummaries();
+  }
+
+  function populateSummaryProfileFilter(runs) {
+    const sel = $("act-sum-profile");
+    const prev = sel.value;
+    const names = [];
+    const seen = new Set();
+    for (const run of runs)
+      for (const p of run.profiles)
+        if (!seen.has(p.profile)) {
+          seen.add(p.profile);
+          names.push(p.profile);
+        }
+    sel.replaceChildren(
+      el("option", { value: "", text: "All profiles" }),
+      ...names.map((n) => el("option", { value: n, text: n })),
+    );
+    if (names.includes(prev)) sel.value = prev;
+  }
+
+  // Render the cached history, optionally narrowed to one profile. Runs with no matching profile
+  // (after filtering) are dropped, so picking a kid shows only the runs that mention them.
+  function renderActivitySummaries() {
+    const filter = $("act-sum-profile").value;
+    const shown = [];
+    for (const run of _actSummaries) {
+      const profiles = filter
+        ? run.profiles.filter((p) => p.profile === filter)
+        : run.profiles;
+      if (profiles.length) shown.push(summaryRunCard(run, profiles));
+    }
+    $("act-summaries-empty").hidden = shown.length > 0;
+    $("act-summaries-list").replaceChildren(...shown);
+  }
+
+  function summaryRunCard(run, profiles) {
+    const when = run.generated_at ? timeAgo(run.generated_at) : "unknown time";
+    const head = [
+      el("span", { class: "summary-run__when", text: "Generated " + when }),
+    ];
+    if (typeof run.event_count === "number")
+      head.push(
+        el("span", {
+          class: "muted summary-run__count",
+          text:
+            run.event_count + (run.event_count === 1 ? " event" : " events"),
+        }),
+      );
+    return el(
+      "div",
+      { class: "summary-run" },
+      el("div", { class: "summary-run__head" }, ...head),
+      ...profiles.map(summaryProfileCard),
+    );
+  }
+
   function loadSection(key) {
     if (key === "dashboard") loadDashboard();
     else if (key === "profiles" && Aegis.loadProfiles) Aegis.loadProfiles();
     else if (key === "requests") loadRequests();
-    else if (key === "activity") loadActivity();
-    else if (key === "whitelist") loadLists();
+    else if (key === "activity") {
+      setActivityTab("timeline"); // always land on the timeline; Summaries is opt-in per visit
+      loadActivity();
+    } else if (key === "whitelist") loadLists();
     // "settings" is a static form — nothing to fetch.
   }
 
@@ -1482,6 +1706,18 @@
     // The AI "Suggest rules" button only works with rules.js loaded; hide it otherwise.
     if (AR) $("act-suggest").addEventListener("click", suggestActivityRules);
     else $("act-suggest").hidden = true;
+    $("act-tab-timeline-btn").addEventListener("click", () =>
+      setActivityTab("timeline"),
+    );
+    $("act-tab-summaries-btn").addEventListener("click", () =>
+      setActivityTab("summaries"),
+    );
+    $("act-sum-profile").addEventListener("change", renderActivitySummaries);
+    if (ASUM)
+      $("dash-summary-refresh").addEventListener("click", () =>
+        refreshActivitySummary({ auto: false }),
+      );
+    else $("dash-summary").hidden = true;
     $("set-pin-btn").addEventListener("click", submitChangePin);
     $("set-pin-new").addEventListener("input", validatePinMatch);
     $("set-pin-confirm").addEventListener("input", validatePinMatch);

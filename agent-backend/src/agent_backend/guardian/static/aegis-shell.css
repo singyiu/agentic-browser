@@ -684,3 +684,122 @@
     transition: none;
   }
 }
+
+/* ---------- Dashboard: AI activity summary ---------- */
+.dash-summary {
+  margin: var(--space-5) 0;
+}
+.dash-summary__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.dash-summary__head h2 {
+  margin: 0;
+  flex: 1 1 auto;
+}
+.dash-summary__meta {
+  font-size: var(--size-sm);
+}
+.dash-summary__refresh {
+  flex: none;
+}
+#dash-summary-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Per-profile summary card — shared by the dashboard panel and the Summaries tab. It nests in a
+   .card, so it uses the subtle inset surface (like .rule-wrap) instead of another drop shadow. */
+.summary-profile {
+  background: var(--bg-1);
+  box-shadow: none;
+  border: 1px solid var(--border-1);
+  padding: var(--space-4);
+}
+.summary-profile__head {
+  margin-bottom: var(--space-2);
+}
+.summary-profile__text {
+  margin: 0 0 var(--space-3);
+  color: var(--fg-1);
+}
+.summary-section {
+  margin-top: var(--space-3);
+}
+.summary-section__label {
+  margin: 0 0 var(--space-1);
+  font-size: var(--size-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--fg-2);
+}
+.summary-section__list {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.summary-section--attention .summary-section__label {
+  color: var(--aegis-terracotta);
+}
+
+/* ---------- Activity: Timeline | Summaries tabs ---------- */
+.act-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  border-bottom: 1px solid var(--border-1);
+}
+.act-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-weight: var(--weight-medium);
+  color: var(--fg-2);
+  cursor: pointer;
+}
+.act-tab:hover {
+  color: var(--fg-1);
+}
+.act-tab[aria-selected="true"] {
+  color: var(--fg-1);
+  border-bottom-color: var(--aegis-terracotta);
+  font-weight: var(--weight-semibold);
+}
+.act-tab:focus-visible {
+  outline: 2px solid var(--aegis-terracotta);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* ---------- Activity: saved summary runs ---------- */
+#act-summaries-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.summary-run__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.summary-run__when {
+  font-weight: var(--weight-semibold);
+}
+.summary-run__count {
+  font-size: var(--size-sm);
+}
+.summary-run .summary-profile {
+  margin-top: var(--space-3);
+}

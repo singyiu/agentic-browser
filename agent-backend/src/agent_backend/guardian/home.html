@@ -12,7 +12,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-180.png" />
     <link rel="stylesheet" href="/static/aegis-tokens.css?v=2" />
     <link rel="stylesheet" href="/static/aegis-components.css?v=4" />
-    <link rel="stylesheet" href="/static/aegis-shell.css?v=5" />
+    <link rel="stylesheet" href="/static/aegis-shell.css?v=6" />
   </head>
   <body>
     <!-- Parent PIN gate: shown until the parent unlocks (the page is only ever
@@ -273,6 +273,27 @@
           >
             <h1>Dashboard</h1>
             <div id="dash-tiles" class="dash-tiles"></div>
+            <section
+              id="dash-summary"
+              class="card dash-summary"
+              aria-labelledby="dash-summary-title"
+            >
+              <div class="dash-summary__head">
+                <h2 id="dash-summary-title">Activity summary</h2>
+                <span
+                  id="dash-summary-meta"
+                  class="muted dash-summary__meta"
+                ></span>
+                <button
+                  id="dash-summary-refresh"
+                  class="primary dash-summary__refresh"
+                  type="button"
+                >
+                  Refresh
+                </button>
+              </div>
+              <div id="dash-summary-body" role="status" aria-live="polite"></div>
+            </section>
           </section>
 
           <section
@@ -344,19 +365,66 @@
               <strong>+ Rule</strong> on any item to build a blocking rule, or
               let Aegis suggest rules from recent activity.
             </p>
-            <div class="card">
-              <label class="settings-field" for="act-profile">Profile</label>
-              <select id="act-profile" class="wl-profile-select"></select>
-              <button id="act-refresh" class="primary" type="button">
-                Refresh
+            <div class="act-tabs" role="tablist" aria-label="Activity views">
+              <button
+                id="act-tab-timeline-btn"
+                class="act-tab"
+                role="tab"
+                type="button"
+                aria-selected="true"
+                aria-controls="act-tab-timeline"
+              >
+                Timeline
               </button>
-              <button id="act-suggest" class="primary" type="button">
-                ✨ Suggest rules
+              <button
+                id="act-tab-summaries-btn"
+                class="act-tab"
+                role="tab"
+                type="button"
+                aria-selected="false"
+                aria-controls="act-tab-summaries"
+              >
+                Summaries
               </button>
             </div>
-            <div id="act-suggestions"></div>
-            <div id="act-list"></div>
-            <p id="act-empty" class="muted" hidden>No activity yet.</p>
+            <div
+              id="act-tab-timeline"
+              role="tabpanel"
+              aria-labelledby="act-tab-timeline-btn"
+              tabindex="0"
+            >
+              <div class="card">
+                <label class="settings-field" for="act-profile">Profile</label>
+                <select id="act-profile" class="wl-profile-select"></select>
+                <button id="act-refresh" class="primary" type="button">
+                  Refresh
+                </button>
+                <button id="act-suggest" class="primary" type="button">
+                  ✨ Suggest rules
+                </button>
+              </div>
+              <div id="act-suggestions"></div>
+              <div id="act-list"></div>
+              <p id="act-empty" class="muted" hidden>No activity yet.</p>
+            </div>
+            <div
+              id="act-tab-summaries"
+              role="tabpanel"
+              aria-labelledby="act-tab-summaries-btn"
+              tabindex="0"
+              hidden
+            >
+              <div class="card">
+                <label class="settings-field" for="act-sum-profile"
+                  >Profile</label
+                >
+                <select id="act-sum-profile" class="wl-profile-select"></select>
+              </div>
+              <div id="act-summaries-list"></div>
+              <p id="act-summaries-empty" class="muted" hidden>
+                No summaries generated yet.
+              </p>
+            </div>
           </section>
 
           <section
@@ -562,7 +630,8 @@
     <script src="/static/store.js?v=1"></script>
     <script src="/static/rules.js?v=2"></script>
     <script src="/static/activity.js?v=2"></script>
-    <script src="/static/shell.js?v=6"></script>
+    <script src="/static/summary.js?v=1"></script>
+    <script src="/static/shell.js?v=7"></script>
     <script src="/static/profiles.js"></script>
   </body>
 </html>
