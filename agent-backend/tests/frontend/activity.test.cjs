@@ -79,19 +79,44 @@ test("consolidate collapses checking -> allowed -> blocked into one 'blocked' ro
   const feed = [ev("block", 40), ev("allow", 20), ev("escalate", 0)];
   const out = consolidate(feed);
   assert.equal(out.length, 1);
-  assert.equal(classifyEvent(out[0]), "blocked"); // most-recent terminal wins
+  assert.equal(classifyEvent(out[0]), "blocked"); // blocked wins (safety-first)
   assert.equal(out[0]._count, 3);
   assert.equal(out[0].url, "https://x.test/a");
   assert.equal(out[0].ts, at(40)); // row time = the most-recent event in the burst
 });
 
-test("consolidate shows the most-recent terminal even when checking is newest", () => {
-  // Defensive ordering: a stray 'checking' newest, with a real terminal just behind it.
+test("consolidate prefers a block even when a checking is the newest event", () => {
+  // A stray 'checking' newest, a real block behind it: safety-first surfaces the block.
   const feed = [ev("escalate", 30), ev("block", 20), ev("allow", 10)];
   const out = consolidate(feed);
   assert.equal(out.length, 1);
-  assert.equal(classifyEvent(out[0]), "blocked"); // newest terminal (block), not the checking
+  assert.equal(classifyEvent(out[0]), "blocked");
   assert.equal(out[0]._count, 3);
+});
+
+test("consolidate is safety-first: a block is never hidden by a newer soft allow", () => {
+  // The real incident: a confident text 'block', then a low-confidence screenshot 'allow'
+  // fallback 7s LATER. Newest-first feed: allow, block, escalate. Blocked must still win.
+  const feed = [
+    ev("allow", 20, { reason: "ambiguous; cannot see content" }),
+    ev("block", 13, { reason: "self-harm warning" }),
+    ev("escalate", 5),
+  ];
+  const out = consolidate(feed);
+  assert.equal(out.length, 1);
+  assert.equal(classifyEvent(out[0]), "blocked"); // blocked wins over the later allow
+  assert.equal(out[0]._count, 3);
+  assert.equal(out[0].reason, "self-harm warning"); // the surfaced row IS the block event
+});
+
+test("consolidate picks the most-recent block when a burst has several blocks", () => {
+  const feed = [
+    ev("block", 30, { reason: "newer block" }),
+    ev("block", 10, { reason: "older block" }),
+  ];
+  const out = consolidate(feed);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].reason, "newer block");
 });
 
 test("consolidate keeps 'checking' only when the burst never resolved", () => {
