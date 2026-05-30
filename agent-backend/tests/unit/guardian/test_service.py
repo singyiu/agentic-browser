@@ -1158,6 +1158,136 @@ def test_activity_suggest_rule_strips_and_caps_output(tmp_path: Path) -> None:
     assert len(rule) <= 300
 
 
+# --- review activity suggest-rules (bulk AI review, PIN-gated, read-only) ---
+
+_ACT_EVENTS = [
+    {
+        "event": "block",
+        "url": "https://www.game.test/play",
+        "profile": "alice",
+        "ts": "2026-05-29T00:01:00Z",
+    },
+    {
+        "event": "allow",
+        "url": "https://www.edu.test/learn",
+        "profile": "bob",
+        "ts": "2026-05-29T00:02:00Z",
+    },
+]
+
+
+def _suggest_rules_client(
+    tmp_path: Path,
+    *,
+    recent: list[dict[str, object]],
+    classifier: object | None = None,
+    parent_pin: str = "testpin",
+) -> tuple[TestClient, FakeLog]:
+    runtimes = _two_profiles(tmp_path)
+    log = FakeLog(recent)
+    app = create_app(
+        _config(parent_pin=parent_pin),
+        classifier=classifier or FakeClassifier(Verdict("allow")),
+        event_log=log,
+        runtimes=runtimes,
+    )
+    return TestClient(app), log
+
+
+def test_activity_suggest_rules_503_when_pin_unset(tmp_path: Path) -> None:
+    client, _ = _suggest_rules_client(tmp_path, recent=_ACT_EVENTS, parent_pin="")
+    assert client.post("/review/activity/suggest-rules", json={}, headers=_PIN).status_code == 503
+
+
+def test_activity_suggest_rules_403_wrong_pin(tmp_path: Path) -> None:
+    client, _ = _suggest_rules_client(tmp_path, recent=_ACT_EVENTS)
+    resp = client.post(
+        "/review/activity/suggest-rules", json={}, headers={"X-Guardian-Parent-Pin": "wrong"}
+    )
+    assert resp.status_code == 403
+
+
+def test_activity_suggest_rules_returns_parsed_suggestions(tmp_path: Path) -> None:
+    payload = json.dumps(
+        [
+            {"kind": "wildcard", "value": "game.test/*", "reason": "Lots of gaming time."},
+            {"kind": "nl", "value": "online multiplayer games", "reason": "Repeated visits."},
+        ]
+    )
+    fake = FakeClassifier(Verdict("allow"), rule_result=payload)
+    client, _ = _suggest_rules_client(tmp_path, recent=_ACT_EVENTS, classifier=fake)
+    resp = client.post("/review/activity/suggest-rules", json={}, headers=_PIN)
+    assert resp.status_code == 200
+    suggestions = resp.json()["suggestions"]
+    assert len(suggestions) == 2
+    assert suggestions[0] == {
+        "kind": "wildcard",
+        "value": "game.test/*",
+        "reason": "Lots of gaming time.",
+    }
+    assert fake.generate_calls == 1
+    # Recent activity is summarized into the model prompt.
+    assert "game.test" in fake.generate_user_prompt
+
+
+def test_activity_suggest_rules_empty_activity_skips_ai(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("allow"), rule_result="[]")
+    client, _ = _suggest_rules_client(tmp_path, recent=[], classifier=fake)
+    resp = client.post("/review/activity/suggest-rules", json={}, headers=_PIN)
+    assert resp.status_code == 200
+    assert resp.json() == {"suggestions": []}
+    assert fake.generate_calls == 0  # no activity -> no LLM call
+
+
+def test_activity_suggest_rules_malformed_output_returns_empty(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("allow"), rule_result="sorry, I cannot help with that")
+    client, _ = _suggest_rules_client(tmp_path, recent=_ACT_EVENTS, classifier=fake)
+    resp = client.post("/review/activity/suggest-rules", json={}, headers=_PIN)
+    assert resp.status_code == 200  # never 500 on unparseable model output
+    assert resp.json() == {"suggestions": []}
+
+
+def test_activity_suggest_rules_drops_invalid_items(tmp_path: Path) -> None:
+    payload = json.dumps(
+        [
+            {"kind": "exact", "value": "bad.test", "reason": "ok"},
+            {"kind": "exact", "reason": "missing value"},  # dropped
+            "not a dict",  # dropped
+            {"value": "", "reason": "empty value"},  # dropped
+        ]
+    )
+    fake = FakeClassifier(Verdict("allow"), rule_result=payload)
+    client, _ = _suggest_rules_client(tmp_path, recent=_ACT_EVENTS, classifier=fake)
+    resp = client.post("/review/activity/suggest-rules", json={}, headers=_PIN)
+    suggestions = resp.json()["suggestions"]
+    assert len(suggestions) == 1
+    assert suggestions[0]["value"] == "bad.test"
+
+
+def test_activity_suggest_rules_clamps_count(tmp_path: Path) -> None:
+    payload = json.dumps([{"kind": "nl", "value": f"topic {i}", "reason": "r"} for i in range(20)])
+    fake = FakeClassifier(Verdict("allow"), rule_result=payload)
+    client, _ = _suggest_rules_client(tmp_path, recent=_ACT_EVENTS, classifier=fake)
+    resp = client.post("/review/activity/suggest-rules", json={}, headers=_PIN)
+    assert len(resp.json()["suggestions"]) <= 8
+
+
+def test_activity_suggest_rules_respects_profile_filter(tmp_path: Path) -> None:
+    client, log = _suggest_rules_client(tmp_path, recent=_ACT_EVENTS)
+    client.post("/review/activity/suggest-rules", json={"profile": "alice"}, headers=_PIN)
+    assert log.recent_calls[-1]["profile"] == "alice"
+    # No profile -> all profiles (None).
+    client.post("/review/activity/suggest-rules", json={}, headers=_PIN)
+    assert log.recent_calls[-1]["profile"] is None
+
+
+def test_activity_suggest_rules_502_on_classifier_error(tmp_path: Path) -> None:
+    fake = FakeClassifier(Verdict("allow"), rule_result=RuntimeError("transport boom"))
+    client, _ = _suggest_rules_client(tmp_path, recent=_ACT_EVENTS, classifier=fake)
+    resp = client.post("/review/activity/suggest-rules", json={}, headers=_PIN)
+    assert resp.status_code == 502
+
+
 # --- reject + optional block rule / hard-block (scoped) ---
 
 

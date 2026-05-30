@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import hmac
+import json
+import re
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -62,6 +64,68 @@ def _parse_activity_limit(raw: str | None) -> int:
     except ValueError:
         return ACTIVITY_LIMIT_DEFAULT
     return max(1, min(value, ACTIVITY_LIMIT_MAX))
+
+
+_MAX_RULE_SUGGESTIONS = 8
+_RULE_KINDS = ("exact", "wildcard", "nl", "content", "ai")
+_SUGGESTION_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
+
+
+def _parse_rule_suggestions(raw: str, *, max_items: int = _MAX_RULE_SUGGESTIONS) -> list[dict]:
+    """Best-effort extraction of a ``[{kind, value, reason}, ...]`` array from model output.
+
+    Mirrors ``parse_verdict``'s fail-safe stance: any malformed / non-JSON / oversized output
+    yields ``[]`` (never raises), so a confused model can never 500 the endpoint. Each item is
+    validated like a list entry (``value``: non-empty, <=512 chars, single-line printable);
+    ``kind`` is clamped to a known label (default ``"content"``); ``reason`` is trimmed.
+    """
+    if not raw:
+        return []
+    text = raw.strip()
+    candidates = [text]
+    match = _SUGGESTION_ARRAY_RE.search(text)
+    if match is not None:
+        candidates.append(match.group(0))
+    data: object = None
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, list):
+            break
+    if not isinstance(data, list):
+        return []
+    out: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("value", "")).strip()
+        if not value or len(value) > 512 or not value.isprintable():
+            continue
+        kind = str(item.get("kind", "")).strip().lower()
+        if kind not in _RULE_KINDS:
+            kind = "content"
+        reason = str(item.get("reason", "")).strip()[:300]
+        out.append({"kind": kind, "value": value, "reason": reason})
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _summarize_activity(events: list[dict], *, max_lines: int = 60) -> str:
+    """One bounded ``- host (outcome, who)`` line per recent event, for the suggest-rules prompt."""
+    lines: list[str] = []
+    for ev in events[:max_lines]:
+        url = str(ev.get("url") or ev.get("url_key") or "").strip()
+        if not url:
+            continue
+        host = extract_host(url) or url
+        blocked = str(ev.get("event", "")) in ("block", "blocklist_block")
+        who = str(ev.get("profile") or "").strip()
+        suffix = f", {who}" if who else ""
+        lines.append(f"- {host} ({'blocked' if blocked else 'allowed'}{suffix})")
+    return "\n".join(lines) if lines else "(none)"
 
 
 _MAX_PROMPT_CHARS = 4000
@@ -923,6 +987,71 @@ def create_app(
         )
         return JSONResponse({"rule": rule})
 
+    def _summarize_existing_rules(profile: str | None, *, max_per: int = 40) -> str:
+        # Compact digest of the block rules already in force (per-teen + Global), so the model
+        # avoids re-suggesting what's covered. Scoped to one teen when a profile filter is set.
+        snap = _pm.snapshot()
+        teens = [snap[profile]] if profile and profile in snap else list(snap.values())
+        lines: list[str] = []
+        for rt in [*teens, _pm.global_runtime()]:
+            values = list(rt.blocklist.current().values)
+            if values:
+                lines.append(f"{rt.name} blocklist: " + ", ".join(values[:max_per]))
+            guidance = rt.prompt_store.current().strip()
+            if guidance:
+                lines.append(f"{rt.name} guidance: {guidance[:400]}")
+        return "\n".join(lines) if lines else "(no rules yet)"
+
+    async def review_activity_suggest_rules(request: Request) -> JSONResponse:
+        # Bulk "what should I block next?" helper for the Activity page: summarize recent activity
+        # plus the rules already in force, then ask the model for NEW block-rule suggestions. PIN-
+        # gated and READ-ONLY (returns drafts; the guardian applies them via /review/blocklist).
+        # The output is parsed fail-safe, so a confused model yields no suggestions, never a 500.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        profile = str(body.get("profile", "")).strip() or None
+        raw_limit = body.get("limit")
+        limit = _parse_activity_limit(None if raw_limit is None else str(raw_limit))
+
+        loop = asyncio.get_running_loop()
+        events = await loop.run_in_executor(
+            None,
+            functools.partial(event_log.recent, limit, profile=profile, events=ACTIVITY_EVENTS),
+        )
+        if not events:
+            # No activity to reason about — skip the LLM call entirely.
+            return JSONResponse({"suggestions": []})
+
+        system_prompt = (
+            "You help a guardian tighten web filtering for their kids. Given recent browsing "
+            "activity and the rules already in force, propose UP TO "
+            f"{_MAX_RULE_SUGGESTIONS} NEW blocking rules not already covered. Reply with ONLY a "
+            'JSON array; each element an object {"kind","value","reason"} where kind is "exact" (a '
+            'hostname), "wildcard" (a host/path containing *), or "nl" (a short natural-language '
+            "topic). Keep value under 200 chars and reason to one sentence. If nothing new is "
+            "worth blocking, reply with []."
+        )
+        user_prompt = (
+            f"RECENT ACTIVITY:\n{_summarize_activity(events)}\n\n"
+            f"RULES ALREADY IN FORCE:\n{_summarize_existing_rules(profile)}\n\n"
+            "Propose new blocking rules as a JSON array."
+        )
+        try:
+            raw = await asyncio.wait_for(
+                classifier.generate(system_prompt=system_prompt, user_prompt=user_prompt),
+                timeout=config.classify_timeout_s,
+            )
+        except Exception:  # noqa: BLE001 - best-effort; the page degrades to manual rule creation
+            return JSONResponse({"error": "rule suggestion failed"}, status_code=502)
+        suggestions = _parse_rule_suggestions(raw)
+        event_log.log("activity_suggest_rules", profile=profile or "", count=len(suggestions))
+        return JSONResponse({"suggestions": suggestions})
+
     def _resolve_parent_profile(name: str) -> ProfileRuntime | None:
         """Pick the profile a parent list write targets.
 
@@ -1354,6 +1483,11 @@ def create_app(
             Route(
                 "/review/activity/suggest-rule",
                 review_activity_suggest_rule,
+                methods=["POST"],
+            ),
+            Route(
+                "/review/activity/suggest-rules",
+                review_activity_suggest_rules,
                 methods=["POST"],
             ),
             Route("/review/prompt", review_prompt, methods=["GET", "POST"]),
