@@ -107,3 +107,36 @@ export function handleAlarm() {
   // No-op: the keepalive alarm exists only to wake the service worker periodically so
   // dwell flushes stay responsive during active browsing.
 }
+
+// Flush the time elapsed so far WITHOUT ending the segment, then reset the clock to now. The
+// periodic heartbeat calls this so a long single-page session (e.g. a 2-hour video on one tab)
+// still depletes the budget — and can be blocked — before the user ever navigates away.
+export async function flushPartial() {
+  const cur = await getCurrent();
+  if (!cur || !cur.urlKey || !cur.since) return;
+  const now = Date.now();
+  const dwellMs = now - cur.since;
+  if (dwellMs >= MIN_DWELL_MS) {
+    await postDwell(cur.urlKey, dwellMs);
+    await setCurrent({ ...cur, since: now });
+  }
+}
+
+// Pause the clock when the user goes idle or locks the screen, and resume on activity. This is
+// what makes accounting count ACTIVE browsing only: a tab left focused while the user is away
+// no longer burns the budget. Driven by chrome.idle.onStateChanged in the service worker.
+export async function handleIdleState(state) {
+  if (state === "active") {
+    try {
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        lastFocusedWindow: true,
+      });
+      if (tab) await startTiming(tab.id);
+    } catch (_e) {
+      // ignore
+    }
+  } else {
+    await flush(); // idle / locked -> bank the time up to now and stop the clock
+  }
+}

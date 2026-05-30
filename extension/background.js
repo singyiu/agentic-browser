@@ -4,9 +4,10 @@
 
 import { getConfig } from "./guardian-client.js";
 import {
+  flushPartial,
   handleActivated,
-  handleAlarm,
   handleFocusChanged,
+  handleIdleState,
   handleRemoved,
   notifyUrlKey,
 } from "./dwell-tracker.js";
@@ -157,10 +158,105 @@ async function captureScreenshot(tabId) {
   }
 }
 
+// --- Screen-time enforcement (server-authoritative) ---
+
+// Cheap, no-LLM check of this profile's current time budget for a URL. Fail-open: any error
+// returns null, so a backend hiccup never blocks browsing.
+async function timeState(url) {
+  const cfg = await getConfig();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const resp = await fetch(
+      `${cfg.endpoint}/time/state?url=${encodeURIComponent(url)}`,
+      { headers: { "X-Guardian-Token": cfg.token }, signal: controller.signal },
+    );
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch (_e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// A friendly block-page message for why time ran out.
+function timeReason(state) {
+  const r = state && state.reason;
+  if (r === "bedtime")
+    return "It's bedtime — browsing is paused until the morning.";
+  if (r === "site_limit")
+    return "You've used up your time for this site today.";
+  return "Time's up — you've used all your screen time for today.";
+}
+
+// Forward a kid's "ask for more time" to the backend (a content script can't call it directly —
+// CORS). Returns the backend response or a failure marker.
+async function submitTimeRequest(message) {
+  const cfg = await getConfig();
+  try {
+    const resp = await fetch(`${cfg.endpoint}/time-request`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Guardian-Token": cfg.token,
+      },
+      body: JSON.stringify({
+        reason: String(message.reason || ""),
+        note: String(message.note || ""),
+        target_host: message.target_host || undefined,
+      }),
+    });
+    if (!resp.ok) return { ok: false, status: resp.status };
+    return { ok: true, ...(await resp.json()) };
+  } catch (_e) {
+    return { ok: false, error: "unreachable" };
+  }
+}
+
+async function activeFocusedTab() {
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    return tab || null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+// Periodic (30s alarm) heartbeat: bank the in-progress dwell so the budget is current, then
+// re-check the active tab — block it the moment the budget is spent (mid-session, not only on
+// the next navigation) and push the latest remaining time to the in-page HUD.
+async function timeHeartbeat() {
+  await flushPartial();
+  const tab = await activeFocusedTab();
+  if (!tab || !tab.id || shouldSkip(tab.url)) return;
+  const state = await timeState(tab.url);
+  if (!state) return;
+  if (state.blocked) {
+    await blockTab(tab.id, timeReason(state), tab.url, { kind: "timelimit" });
+    return;
+  }
+  sendToTab(tab.id, { type: "UPDATE_TIME_HUD", state });
+}
+
 async function handleNavigation(tabId, url) {
   if (shouldSkip(url)) return;
   console.log(`[guardian] nav tab=${tabId} url=${url}`);
   notifyUrlKey(tabId, url); // (re)start dwell timing for the active page
+
+  // Screen-time gate (server-authoritative): block when the budget is spent or during a bedtime
+  // window. Excluded/educational hosts come back blocked=false, so they stay usable.
+  const tState = await timeState(url);
+  if (tState) {
+    if (tState.blocked) {
+      await blockTab(tabId, timeReason(tState), url, { kind: "timelimit" });
+      return;
+    }
+    sendToTab(tabId, { type: "UPDATE_TIME_HUD", state: tState });
+  }
 
   // Search-keyword gate: when this navigation is a search, judge the QUERY first. A blocked
   // query goes straight to the search-mode block page; an allowed query falls through to the
@@ -245,6 +341,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     classifySearchQuery(String(message.query || "")).then(sendResponse);
     return true; // async response
   }
+  if (message?.type === "TIME_REQUEST") {
+    // Proxy the in-page HUD's "ask for more time" through the SW (content scripts can't call the
+    // backend directly — CORS). Only honor it from our own extension contexts.
+    if (sender.id !== chrome.runtime.id) {
+      sendResponse({ ok: false, error: "unauthorized" });
+      return false;
+    }
+    submitTimeRequest(message || {}).then(sendResponse);
+    return true; // async response
+  }
   if (message?.type === "CLEAR_HOTCACHE") {
     // Only honor this from our own block page — not from content scripts running in web
     // pages (which could otherwise evict a verdict to fish for a fail-open).
@@ -267,4 +373,11 @@ chrome.tabs.onActivated.addListener((info) => handleActivated(info.tabId));
 chrome.tabs.onRemoved.addListener((tabId) => handleRemoved(tabId));
 chrome.windows.onFocusChanged.addListener((winId) => handleFocusChanged(winId));
 chrome.alarms.create("guardian-dwell-keepalive", { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener(handleAlarm);
+chrome.alarms.onAlarm.addListener((alarm) => {
+  // Every 30s: bank in-progress dwell, enforce the budget on the active tab, refresh the HUD.
+  if (alarm.name === "guardian-dwell-keepalive") timeHeartbeat();
+});
+
+// Count active browsing only: pause the dwell clock when the user is idle / screen-locked.
+chrome.idle.setDetectionInterval(60);
+chrome.idle.onStateChanged.addListener(handleIdleState);

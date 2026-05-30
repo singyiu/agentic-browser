@@ -21,10 +21,28 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["block.html", "block.js", "block.css", "guardian-config.json", "aegis-tokens.css", "aegis-components.css", "aegis-shield.svg", "fonts/*", "icons/*"],
+      "resources": [
+        "block.html",
+        "block.js",
+        "block.css",
+        "guardian-config.json",
+        "aegis-tokens.css",
+        "aegis-components.css",
+        "aegis-shield.svg",
+        "fonts/*",
+        "icons/*"
+      ],
       "matches": ["<all_urls>"]
     }
   ],
-  "permissions": ["webNavigation", "tabs", "scripting", "storage", "activeTab", "alarms"],
+  "permissions": [
+    "webNavigation",
+    "tabs",
+    "scripting",
+    "storage",
+    "activeTab",
+    "alarms",
+    "idle"
+  ],
   "host_permissions": ["<all_urls>"]
 }
