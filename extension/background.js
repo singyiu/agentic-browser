@@ -379,5 +379,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 // Count active browsing only: pause the dwell clock when the user is idle / screen-locked.
-chrome.idle.setDetectionInterval(60);
-chrome.idle.onStateChanged.addListener(handleIdleState);
+// Guarded: if the "idle" permission isn't present, never let it crash the worker on startup —
+// time enforcement still works via navigation checks + the 30s heartbeat, just without idle pausing.
+if (chrome.idle && chrome.idle.onStateChanged) {
+  chrome.idle.setDetectionInterval(60);
+  chrome.idle.onStateChanged.addListener(handleIdleState);
+}

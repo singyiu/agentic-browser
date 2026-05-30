@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Agentic Parental Control",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Classifies pages for a 10-year-old and blocks unsuitable content via the local guardian backend.",
   "minimum_chrome_version": "114",
   "icons": {
