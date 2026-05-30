@@ -63,6 +63,9 @@ class GuardianConfig:
     search_block_path: str = DEFAULT_SEARCH_BLOCK_PATH
     # Path to saved AI activity-summary runs (JSONL): dashboard panel + Activity "Summaries" tab.
     summary_log_path: str = DEFAULT_SUMMARY_LOG_PATH
+    # Household timezone (IANA name, e.g. "America/Los_Angeles") used for screen-time day
+    # boundaries and bedtime windows. Empty → the server's local timezone.
+    household_tz: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> GuardianConfig:
@@ -95,6 +98,7 @@ class GuardianConfig:
             summary_log_path=(
                 _clean(e.get("GUARDIAN_SUMMARY_LOG_PATH")) or DEFAULT_SUMMARY_LOG_PATH
             ),
+            household_tz=_clean(e.get("GUARDIAN_HOUSEHOLD_TZ")),
             whitelist_path=_clean(e.get("GUARDIAN_WHITELIST_PATH")) or DEFAULT_WHITELIST_PATH,
             blocklist_path=_clean(e.get("GUARDIAN_BLOCKLIST_PATH")) or DEFAULT_BLOCKLIST_PATH,
             requests_path=_clean(e.get("GUARDIAN_REQUESTS_PATH")) or DEFAULT_REQUESTS_PATH,

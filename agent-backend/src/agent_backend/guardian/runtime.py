@@ -16,6 +16,8 @@ from .cache import VerdictCache
 from .keyword_store import KeywordStore
 from .profiles import Profile
 from .prompt import PromptStore
+from .time_policy import TimePolicyStore
+from .time_requests import TimeRequestStore
 from .whitelist import WhitelistStore
 
 
@@ -36,6 +38,8 @@ class ProfileRuntime:
     prompt_store: PromptStore
     search_allow: KeywordStore
     search_block: KeywordStore
+    time_policy: TimePolicyStore
+    time_request_store: TimeRequestStore
     age: int
 
 
@@ -59,6 +63,9 @@ def build_runtime(profile: Profile) -> ProfileRuntime:
             raise ConfigError(
                 f"Cannot create data directory for profile {profile.name!r}: {exc}"
             ) from exc
+    # The screen-time stores share the profile's data dir; derive their paths from an
+    # existing per-profile path so the profile registry schema (profiles.py) is unchanged.
+    base = Path(profile.whitelist_path).expanduser().parent
     return ProfileRuntime(
         name=profile.name,
         token=profile.token,
@@ -69,5 +76,7 @@ def build_runtime(profile: Profile) -> ProfileRuntime:
         prompt_store=PromptStore(profile.prompt_path),
         search_allow=KeywordStore(profile.search_allow_path),
         search_block=KeywordStore(profile.search_block_path),
+        time_policy=TimePolicyStore(str(base / "time_policy.json")),
+        time_request_store=TimeRequestStore(str(base / "time_requests.json")),
         age=profile.age,
     )
