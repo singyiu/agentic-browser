@@ -320,6 +320,46 @@ bash scripts/uninstall-guardian-service.sh
   `deploy/guardian.systemd.service.template`; run `loginctl enable-linger "$USER"` to keep it running
   without an active login. (Provided for the LAN topology; verified on macOS.)
 
+## Lock the extension on the kid browser
+
+By default `launch-chromium.sh` loaded the extension **unpacked** (`--load-extension`), which
+a child can simply toggle off at `chrome://extensions`. To make the parental-control extension
+**force-installed, pinned to the toolbar, and impossible to disable or remove**, the kid browser
+uses a macOS **managed-preferences policy** (`ExtensionSettings` → `force_installed` +
+`force_pinned`, plus `"*": blocked` so no other extensions can be added). `force_installed`
+requires the extension to be a signed CRX served from an update manifest, so we self-host both
+from the guardian:
+
+```sh
+# 1. Pack + sign the extension (stable id from agent-backend/.secrets/aegis-ext.pem), bake the
+#    token into guardian-config.json, and emit aegis.crx + updates.xml under .chromium-dist/:
+bash scripts/pack-extension.sh
+
+# 2. Make sure the guardian is up so it serves /ext/updates.xml + /ext/aegis.crx
+#    (restart it if it was already running): 
+launchctl kickstart -k "gui/$(id -u)/com.aegis.guardian"
+
+# 3. Install the mandatory policy (writes /Library/Managed Preferences/org.chromium.Chromium.plist):
+sudo bash scripts/install-extension-policy.sh        # add AEGIS_INSECURE_UPDATES=1 if step 4 says blocked
+
+# 4. Relaunch the kid browser and verify:
+bash scripts/launch-chromium.sh
+#    chrome://policy      -> ExtensionSettings present, Status OK
+#    chrome://extensions  -> "Installed by enterprise policy", no disable/remove, pinned to toolbar
+```
+
+- **Development:** `AEGIS_DEV_UNPACKED=1 bash scripts/launch-chromium.sh` reverts to the
+  live-editable unpacked load (not locked) so you don't have to re-pack on every edit. To remove
+  the lock entirely: `sudo bash scripts/uninstall-extension-policy.sh`.
+- **Updating the locked extension:** bump `version` in `extension/manifest.json`, re-run
+  `pack-extension.sh`; the managed updater picks it up on its next poll (or on relaunch).
+- **The signing key is load-bearing.** `agent-backend/.secrets/aegis-ext.pem` defines the
+  extension id (`kmnemdhnpddlknbaiggdnolchnlpgkjl`). It is git-ignored — **back it up**; losing it
+  changes the id and you must re-pack and re-install the policy. Re-pack whenever the token rotates
+  (it is baked into the CRX).
+- **Scope.** This locks the *kid* (non-admin) at the browser layer. A user with `sudo` can remove
+  the managed plist, and incognito/other browsers are out of scope (see the LAN/network notes).
+
 ## MCP tools
 
 `browser_navigate`, `browser_snapshot` (accessibility tree), `browser_click`,
