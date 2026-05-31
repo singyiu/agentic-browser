@@ -977,6 +977,16 @@
 .prize-grant__field .settings-field {
   margin-top: 0;
 }
+/* The select carries a bottom margin from the whitelist page; drop it here so the control
+   bottoms line up, and match every control to the select's 48px height so the row reads as
+   one tidy line (the design-system select is taller than a text input). */
+.prize-grant__field .wl-profile-select {
+  margin-bottom: 0;
+}
+.prize-grant__field input,
+.prize-grant .primary {
+  min-height: 48px;
+}
 .prize-grant__field--grow {
   flex: 1 1 14rem;
 }
