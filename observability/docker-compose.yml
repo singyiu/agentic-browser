@@ -19,6 +19,9 @@ services:
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      # Allow the guardian dashboard (SPA on :2947) to embed Grafana panels via <iframe>.
+      # Without this, Grafana sends X-Frame-Options: deny and the embeds are refused.
+      - GF_SECURITY_ALLOW_EMBEDDING=true
     volumes:
       - lgtm-data:/data
       # Provisioned browser-usage dashboard.

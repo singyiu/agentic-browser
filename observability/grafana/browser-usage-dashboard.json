@@ -7,7 +7,23 @@
   "version": 1,
   "refresh": "30s",
   "time": { "from": "now-6h", "to": "now" },
-  "templating": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "profile",
+        "label": "Profile",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values(guardian_dwell_seconds_total, profile)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
   "annotations": { "list": [] },
   "panels": [
     {
@@ -107,6 +123,28 @@
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 28 },
       "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" },
       "targets": [{ "refId": "A", "datasource": { "type": "loki", "uid": "loki" }, "expr": "{job=\"chromium\"}" }]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Screen time per day by profile",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 36 },
+      "interval": "1d",
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "pointSize": 6, "showPoints": "always", "lineInterpolation": "smooth" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (profile) (increase(guardian_dwell_seconds_total[1d]))", "legendFormat": "{{profile}}" }]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Website time (selected range)",
+      "description": "Time-on-page per website for $profile over the panel's time range (Activity tab embeds this with a 48h range).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 45 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "align": "auto", "filterable": true } }, "overrides": [] },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "topk(20, sum by (host) (increase(guardian_dwell_seconds_total{profile=~\"$profile\"}[$__range])))", "instant": true, "format": "table" }]
     }
   ]
 }
