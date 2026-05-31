@@ -190,7 +190,10 @@
 
   // Build a Grafana solo-panel URL for an <iframe>. `from`/`to` take Grafana relative ranges
   // (e.g. "now-48h"); `profile`, when set, selects the dashboard's `profile` template variable.
-  function soloUrl(panelId, { profile, from = "now-14d", to = "now" } = {}) {
+  function soloUrl(
+    panelId,
+    { profile, from = "now-14d", to = "now", refresh } = {},
+  ) {
     const p = new URLSearchParams({
       orgId: "1",
       panelId: String(panelId),
@@ -199,6 +202,7 @@
       to,
     });
     if (profile) p.set("var-profile", profile);
+    if (refresh) p.set("refresh", refresh); // Grafana auto-refresh interval (e.g. "15s")
     return (
       GRAFANA_BASE +
       "/d-solo/" +
@@ -228,24 +232,16 @@
   }
 
   // Re-point the balance chart's iframe so it re-queries Grafana (assigning src reloads the frame).
-  // No var-profile: panel 13 already plots one series per (non-global) profile.
+  // refresh=15s makes the embed auto-refresh on Grafana's side: a grant/redeem isn't visible in
+  // Prometheus until Alloy's next scrape (~15s, see observability/alloy/config.alloy), so the panel
+  // keeps re-querying and converges to the current balance on its own — no manual page refresh, and
+  // it self-heals after kid redemptions or re-entering the page. No var-profile: panel 13 already
+  // plots one series per (non-global) profile.
   function refreshPrizeChart() {
     const frame = $("prize-chart-frame");
     if (!frame) return;
-    frame.src = soloUrl(13, { from: "now-14d", to: "now" });
+    frame.src = soloUrl(13, { from: "now-14d", to: "now", refresh: "15s" });
     frame.dataset.loaded = "1";
-  }
-
-  // A grant updates the gauge instantly, but it isn't in Prometheus until Alloy's next scrape
-  // (~15s, see observability/alloy/config.alloy). Reload now for immediate feedback, then once
-  // more after the scrape lands so the new point appears without a manual refresh. Debounced so
-  // rapid grants schedule a single follow-up reload.
-  const PRIZE_CHART_SCRAPE_LAG_MS = 16000;
-  let _prizeChartTimer = null;
-  function refreshPrizeChartAfterGrant() {
-    refreshPrizeChart();
-    if (_prizeChartTimer) clearTimeout(_prizeChartTimer);
-    _prizeChartTimer = setTimeout(refreshPrizeChart, PRIZE_CHART_SCRAPE_LAG_MS);
   }
 
   // Fill the grant form's profile <select> with teens only (the global profile can't earn points).
@@ -326,7 +322,7 @@
       $("prize-grant-points").value = "";
       $("prize-grant-reason").value = "";
       loadPrizeBalances();
-      refreshPrizeChartAfterGrant(); // reflect the new balance in the chart automatically
+      refreshPrizeChart(); // kick now; the embed's 15s auto-refresh lands the scraped value
     } else {
       toast("Grant failed (" + r.status + ").");
     }
