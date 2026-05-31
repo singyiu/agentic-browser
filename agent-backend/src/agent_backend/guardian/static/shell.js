@@ -2129,6 +2129,10 @@
     $("prize-grant-points").addEventListener("keydown", (e) => {
       if (e.key === "Enter") grantPrizePoints();
     });
+    $("prize-chart-refresh").addEventListener("click", () => {
+      refreshPrizeChart();
+      toast("Refreshing chart…");
+    });
     if (ASUM)
       $("dash-summary-refresh").addEventListener("click", () =>
         refreshActivitySummary({ auto: false }),

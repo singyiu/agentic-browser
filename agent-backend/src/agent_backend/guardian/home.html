@@ -12,7 +12,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-180.png" />
     <link rel="stylesheet" href="/static/aegis-tokens.css?v=2" />
     <link rel="stylesheet" href="/static/aegis-components.css?v=4" />
-    <link rel="stylesheet" href="/static/aegis-shell.css?v=14" />
+    <link rel="stylesheet" href="/static/aegis-shell.css?v=15" />
   </head>
   <body>
     <!-- Parent PIN gate: shown until the parent unlocks (the page is only ever
@@ -869,6 +869,13 @@
                 <span class="muted st-note">
                   Last 14 days, one line per kid profile.
                 </span>
+                <button
+                  id="prize-chart-refresh"
+                  class="primary st-embed__refresh"
+                  type="button"
+                >
+                  Refresh
+                </button>
               </div>
               <iframe
                 id="prize-chart-frame"
@@ -890,7 +897,7 @@
     <script src="/static/activity.js?v=2"></script>
     <script src="/static/summary.js?v=1"></script>
     <script src="/static/time-core.js?v=2"></script>
-    <script src="/static/shell.js?v=16"></script>
+    <script src="/static/shell.js?v=17"></script>
     <script src="/static/profiles.js"></script>
     <script src="/static/time.js?v=1"></script>
   </body>

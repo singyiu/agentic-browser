@@ -961,6 +961,12 @@
 .st-frame--tall {
   min-height: 440px;
 }
+/* Manual "Refresh" button in an embed header: keep its natural width and center it against
+   the baseline-aligned title/note row. */
+.st-embed__refresh {
+  flex: none;
+  align-self: center;
+}
 
 /* ---------- Prize points (parent page) ---------- */
 .prize-grant {
