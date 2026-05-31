@@ -133,7 +133,7 @@
       "interval": "1d",
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "pointSize": 6, "showPoints": "always", "lineInterpolation": "smooth" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (profile) (increase(guardian_dwell_seconds_total[1d]))", "legendFormat": "{{profile}}" }]
+      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (profile) (increase(guardian_dwell_seconds_total{profile!=\"\"}[1d]))", "legendFormat": "{{profile}}" }]
     },
     {
       "id": 12,
