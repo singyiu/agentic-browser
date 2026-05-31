@@ -12,7 +12,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-180.png" />
     <link rel="stylesheet" href="/static/aegis-tokens.css?v=2" />
     <link rel="stylesheet" href="/static/aegis-components.css?v=4" />
-    <link rel="stylesheet" href="/static/aegis-shell.css?v=11" />
+    <link rel="stylesheet" href="/static/aegis-shell.css?v=12" />
   </head>
   <body>
     <!-- Parent PIN gate: shown until the parent unlocks (the page is only ever
@@ -180,6 +180,28 @@
                   </svg>
                 </span>
                 <span class="nav-item__label">Screen time</span>
+              </a>
+            </li>
+            <li>
+              <a id="nav-prize" class="nav-item" href="#/prize">
+                <span class="nav-item__icon">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="8" width="18" height="4" rx="1" />
+                    <path d="M12 8v13" />
+                    <path d="M19 12v7a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-7" />
+                    <path d="M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8" />
+                    <path d="M16.5 8a2.5 2.5 0 0 0 0-5C13 3 12 8 12 8" />
+                  </svg>
+                </span>
+                <span class="nav-item__label">Prize point</span>
               </a>
             </li>
             <li>
@@ -750,6 +772,85 @@
               <div id="time-usage"><p class="muted">…</p></div>
             </div>
           </section>
+
+          <section
+            id="sec-prize"
+            class="shell-section"
+            tabindex="-1"
+            aria-label="Prize point"
+            hidden
+          >
+            <h1>Prize point</h1>
+
+            <div class="card">
+              <h2>Grant points</h2>
+              <p class="muted">
+                Award prize points to a kid. They can spend points for bonus
+                screen time on their own — 1 point buys 1 minute, in
+                15/30/60-minute packages.
+              </p>
+              <div class="prize-grant">
+                <div class="prize-grant__field">
+                  <label class="settings-field" for="prize-grant-profile">
+                    Profile
+                  </label>
+                  <select
+                    id="prize-grant-profile"
+                    class="wl-profile-select"
+                  ></select>
+                </div>
+                <div class="prize-grant__field">
+                  <label class="settings-field" for="prize-grant-points">
+                    Points
+                  </label>
+                  <input
+                    id="prize-grant-points"
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputmode="numeric"
+                    placeholder="e.g. 30"
+                  />
+                </div>
+                <div class="prize-grant__field prize-grant__field--grow">
+                  <label class="settings-field" for="prize-grant-reason">
+                    Reason (optional)
+                  </label>
+                  <input
+                    id="prize-grant-reason"
+                    type="text"
+                    maxlength="200"
+                    placeholder="e.g. finished homework"
+                  />
+                </div>
+                <button id="prize-grant-btn" class="primary" type="button">
+                  Grant
+                </button>
+              </div>
+              <p id="prize-grant-hint" class="hint" aria-live="polite"></p>
+            </div>
+
+            <div class="card">
+              <h2>Balances</h2>
+              <div id="prize-balances"><p class="muted">…</p></div>
+            </div>
+
+            <section class="card st-embed" aria-labelledby="prize-chart-title">
+              <div class="st-embed__head">
+                <h2 id="prize-chart-title">Prize points over time</h2>
+                <span class="muted st-note">
+                  Last 14 days, one line per kid profile.
+                </span>
+              </div>
+              <iframe
+                id="prize-chart-frame"
+                class="st-frame"
+                title="Prize points per profile"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+              ></iframe>
+            </section>
+          </section>
         </div>
       </main>
     </div>
@@ -761,7 +862,7 @@
     <script src="/static/activity.js?v=2"></script>
     <script src="/static/summary.js?v=1"></script>
     <script src="/static/time-core.js?v=2"></script>
-    <script src="/static/shell.js?v=12"></script>
+    <script src="/static/shell.js?v=13"></script>
     <script src="/static/profiles.js"></script>
     <script src="/static/time.js?v=1"></script>
   </body>

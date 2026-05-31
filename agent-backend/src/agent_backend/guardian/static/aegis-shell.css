@@ -961,3 +961,44 @@
 .st-frame--tall {
   min-height: 440px;
 }
+
+/* ---------- Prize points (parent page) ---------- */
+.prize-grant {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+.prize-grant__field {
+  display: flex;
+  flex-direction: column;
+  min-width: 9rem;
+}
+.prize-grant__field .settings-field {
+  margin-top: 0;
+}
+.prize-grant__field--grow {
+  flex: 1 1 14rem;
+}
+.prize-grant .primary {
+  flex: 0 0 auto;
+}
+.prize-balance {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-1);
+}
+.prize-balance:last-child {
+  border-bottom: 0;
+}
+.prize-balance__name {
+  font-weight: var(--weight-semibold);
+  color: var(--fg-1);
+}
+.prize-balance__pts {
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}

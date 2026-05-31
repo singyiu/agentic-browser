@@ -104,6 +104,7 @@
     "activity",
     "whitelist",
     "time",
+    "prize",
     "settings",
   ];
 
@@ -214,6 +215,103 @@
     if (!frame || frame.dataset.loaded) return;
     frame.src = soloUrl(11, { from: "now-14d", to: "now" });
     frame.dataset.loaded = "1";
+  }
+
+  /* ---------- Prize points (parent page: grant + balances + chart) ---------- */
+  /* The "Prize point" page lets a parent award points (PIN-gated POST), see each kid's balance,
+     and view the 14-day balance chart embedded from Grafana (panel 13, all teens as series). */
+  async function loadPrize() {
+    const frame = $("prize-chart-frame");
+    if (frame && !frame.dataset.loaded) {
+      // No var-profile: panel 13 already plots one series per (non-global) profile.
+      frame.src = soloUrl(13, { from: "now-14d", to: "now" });
+      frame.dataset.loaded = "1";
+    }
+    await populatePrizeProfiles();
+    loadPrizeBalances();
+  }
+
+  // Fill the grant form's profile <select> with teens only (the global profile can't earn points).
+  async function populatePrizeProfiles() {
+    const sel = $("prize-grant-profile");
+    if (!sel || sel.dataset.filled) return;
+    const profiles = await fetchProfiles();
+    if (!profiles) return;
+    const teens = profiles.filter((p) => !p.is_global).map((p) => p.name);
+    sel.replaceChildren(
+      ...teens.map((name) => el("option", { value: name, text: name })),
+    );
+    sel.dataset.filled = "1";
+  }
+
+  async function loadPrizeBalances() {
+    let r;
+    try {
+      r = await api("/review/prize-points");
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (!r.ok) {
+      toast("Could not load balances (" + r.status + ").");
+      return;
+    }
+    const balances = ((await r.json()).balances || []).slice();
+    const list = $("prize-balances");
+    if (!balances.length) {
+      list.replaceChildren(
+        el("p", { class: "muted", text: "No kid profiles yet." }),
+      );
+      return;
+    }
+    list.replaceChildren(
+      ...balances.map((b) =>
+        el(
+          "div",
+          { class: "prize-balance" },
+          el("span", { class: "prize-balance__name", text: b.profile }),
+          el("span", {
+            class: "prize-balance__pts",
+            text: b.balance + (b.balance === 1 ? " point" : " points"),
+          }),
+        ),
+      ),
+    );
+  }
+
+  async function grantPrizePoints() {
+    const profile = $("prize-grant-profile").value;
+    const points = Number($("prize-grant-points").value);
+    const reason = $("prize-grant-reason").value.trim();
+    const hint = $("prize-grant-hint");
+    if (!profile) {
+      hint.textContent = "Pick a profile first.";
+      return;
+    }
+    if (!Number.isInteger(points) || points <= 0) {
+      hint.textContent = "Enter a whole number of points greater than 0.";
+      return;
+    }
+    hint.textContent = "";
+    let r;
+    try {
+      r = await api("/review/prize-points/grant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile, points, reason }),
+      });
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (r.ok) {
+      toast("Granted " + points + " ✓");
+      $("prize-grant-points").value = "";
+      $("prize-grant-reason").value = "";
+      loadPrizeBalances();
+    } else {
+      toast("Grant failed (" + r.status + ").");
+    }
   }
 
   /* ---------- Dashboard: AI activity summary ---------- */
@@ -1696,6 +1794,7 @@
       loadActivity();
     } else if (key === "whitelist") loadLists();
     else if (key === "time" && Aegis.loadTime) Aegis.loadTime();
+    else if (key === "prize") loadPrize();
     // "settings" is a static form — nothing to fetch.
   }
 
@@ -1943,6 +2042,10 @@
     $("act-sum-profile").addEventListener("change", renderActivitySummaries);
     $("act-st-profile").addEventListener("change", renderScreenTimeFrame);
     $("act-st-window").addEventListener("change", renderScreenTimeFrame);
+    $("prize-grant-btn").addEventListener("click", grantPrizePoints);
+    $("prize-grant-points").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") grantPrizePoints();
+    });
     if (ASUM)
       $("dash-summary-refresh").addEventListener("click", () =>
         refreshActivitySummary({ auto: false }),
