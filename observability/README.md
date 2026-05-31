@@ -13,7 +13,7 @@ over `host.docker.internal` and reads host log files through read-only bind moun
 | Classification metrics | host guardian `/metrics` (`:2948`), scraped by Alloy | Prometheus `guardian_*` |
 | Guardian events | `agent-backend/data/guardian_events.jsonl` | Loki `{job="guardian"}` |
 | Chromium process logs | `.chromium-profile/chrome_debug.log` | Loki `{job="chromium"}` |
-| Browser dwell time | extension → `POST /dwell` → guardian | Prometheus `guardian_dwell_seconds_total` |
+| Browser dwell time | extension → `POST /dwell` → guardian | Prometheus `guardian_dwell_seconds_total{host, profile}` |
 | Claude Code transcripts | `~/.claude/projects/.../*.jsonl` (opt-in, **redacted**) | Loki `{job="claude_transcript"}` |
 
 ## Quick start
@@ -34,6 +34,26 @@ scripts/launch-chromium.sh    # built Chromium + extension + chrome_debug.log
 ```
 
 Then open **http://localhost:3000** (anonymous admin) → dashboard **“Guardian — Browser Usage”**.
+
+## Per-profile screen time (embedded in the guardian dashboard)
+
+The guardian dashboard (`:2947`) embeds two panels from this stack so a parent never has to leave
+it. They are driven by the per-profile dwell metric `guardian_dwell_seconds_total{host, profile}`:
+
+- **Panel 11 — "Screen time per day by profile"** (`timeseries`): `sum by (profile)
+  (increase(guardian_dwell_seconds_total[1d]))`. Embedded on the dashboard's *Screen time* card.
+- **Panel 12 — "Website time (selected range)"** (`table`): `topk(20, sum by (host)
+  (increase(guardian_dwell_seconds_total{profile=~"$profile"}[$__range])))`. Embedded in the
+  Activity *Screen time* tab, with the in-app selectors setting `var-profile` and a 48h `from`/`to`.
+
+A `profile` dashboard variable (`label_values(guardian_dwell_seconds_total, profile)`) backs the
+`$profile` filter. The guardian builds the embed URLs with Grafana's solo renderer, e.g.
+`/d-solo/guardian-browser-usage/screen-time?panelId=12&var-profile=Hei&from=now-48h&to=now`.
+
+**Embedding is enabled by `GF_SECURITY_ALLOW_EMBEDDING=true`** on the `lgtm` service (in
+`docker-compose.yml`). Without it Grafana sends `X-Frame-Options: deny` and the iframes are refused.
+Combined with the existing anonymous-Admin auth, the embedded panels render with no login — fine on
+this loopback host (note the screen-time iframes are therefore not behind the guardian's parent PIN).
 
 ## Enabling Claude transcript ingestion (opt-in)
 

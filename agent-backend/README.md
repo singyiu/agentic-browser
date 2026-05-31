@@ -360,6 +360,33 @@ bash scripts/launch-chromium.sh
 - **Scope.** This locks the *kid* (non-admin) at the browser layer. A user with `sudo` can remove
   the managed plist, and incognito/other browsers are out of scope (see the LAN/network notes).
 
+## Screen-time visualization (Grafana)
+
+The dashboard shows how much screen time each kid profile spends:
+
+- **Dashboard → "Screen time per day"** — a line chart of total active browsing per day, one
+  series per kid profile (last 14 days).
+- **Activity → "Screen time" tab** — websites and time consumed for one profile over a window
+  (default last 48 hours); pick the profile and window from the selectors.
+
+Both **embed Grafana panels** from the local observability stack (they are `<iframe>`s pointing at
+Grafana's `d-solo` render of the provisioned *Guardian — Browser Usage* dashboard). The data comes
+from the existing screen-time pipeline — the extension already `POST`s `/dwell`, which now records a
+per-profile Prometheus metric (`guardian_dwell_seconds_total{host, profile}`).
+
+Requirements:
+
+```bash
+# The observability stack must be running (Grafana + Prometheus + Alloy scraper):
+cd ../observability && docker compose up -d
+```
+
+- Grafana is expected at `http://localhost:3000` (the `GRAFANA_BASE` constant in
+  `guardian/static/shell.js`). If you change `GRAFANA_PORT`, update that constant.
+- Embedding requires `GF_SECURITY_ALLOW_EMBEDDING=true` (set in `observability/docker-compose.yml`).
+- Per-profile series populate as the kid browses (a Prometheus counter first appears on its initial
+  increment), so a freshly restarted guardian shows an empty chart until some dwell accrues.
+
 ## MCP tools
 
 `browser_navigate`, `browser_snapshot` (accessibility tree), `browser_click`,
