@@ -130,8 +130,8 @@
       "title": "Screen time per day by profile",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 9, "w": 24, "x": 0, "y": 36 },
-      "interval": "1d",
-      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "pointSize": 6, "showPoints": "always", "lineInterpolation": "smooth" } }, "overrides": [] },
+      "maxDataPoints": 5000,
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "pointSize": 6, "showPoints": "always", "lineInterpolation": "smooth", "spanNulls": true } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (profile) (increase(guardian_dwell_seconds_total{profile!=\"\"}[1d]))", "legendFormat": "{{profile}}" }]
     },
