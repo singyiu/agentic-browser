@@ -222,13 +222,30 @@
      and view the 14-day balance chart embedded from Grafana (panel 13, all teens as series). */
   async function loadPrize() {
     const frame = $("prize-chart-frame");
-    if (frame && !frame.dataset.loaded) {
-      // No var-profile: panel 13 already plots one series per (non-global) profile.
-      frame.src = soloUrl(13, { from: "now-14d", to: "now" });
-      frame.dataset.loaded = "1";
-    }
+    if (frame && !frame.dataset.loaded) refreshPrizeChart();
     await populatePrizeProfiles();
     loadPrizeBalances();
+  }
+
+  // Re-point the balance chart's iframe so it re-queries Grafana (assigning src reloads the frame).
+  // No var-profile: panel 13 already plots one series per (non-global) profile.
+  function refreshPrizeChart() {
+    const frame = $("prize-chart-frame");
+    if (!frame) return;
+    frame.src = soloUrl(13, { from: "now-14d", to: "now" });
+    frame.dataset.loaded = "1";
+  }
+
+  // A grant updates the gauge instantly, but it isn't in Prometheus until Alloy's next scrape
+  // (~15s, see observability/alloy/config.alloy). Reload now for immediate feedback, then once
+  // more after the scrape lands so the new point appears without a manual refresh. Debounced so
+  // rapid grants schedule a single follow-up reload.
+  const PRIZE_CHART_SCRAPE_LAG_MS = 16000;
+  let _prizeChartTimer = null;
+  function refreshPrizeChartAfterGrant() {
+    refreshPrizeChart();
+    if (_prizeChartTimer) clearTimeout(_prizeChartTimer);
+    _prizeChartTimer = setTimeout(refreshPrizeChart, PRIZE_CHART_SCRAPE_LAG_MS);
   }
 
   // Fill the grant form's profile <select> with teens only (the global profile can't earn points).
@@ -309,6 +326,7 @@
       $("prize-grant-points").value = "";
       $("prize-grant-reason").value = "";
       loadPrizeBalances();
+      refreshPrizeChartAfterGrant(); // reflect the new balance in the chart automatically
     } else {
       toast("Grant failed (" + r.status + ").");
     }
