@@ -30,6 +30,13 @@ from .keyword_store import KeywordStore
 from .metrics import GuardianMetrics
 from .normalize import extract_host, normalize_url
 from .pin_store import PinStore, validate_pin_format
+from .prize_points import (
+    POINTS_PER_MINUTE,
+    REDEEM_PACKAGES_MIN,
+    PrizePointStore,
+    cost_for_minutes,
+    redeemed_minutes_today,
+)
 from .profile_manager import (
     InvalidProfileNameError,
     ProfileExistsError,
@@ -75,6 +82,10 @@ ACTIVITY_EVENTS: tuple[str, ...] = (
 ACTIVITY_LIMIT_DEFAULT = 100
 ACTIVITY_LIMIT_MAX = 500
 
+# Prize-point change events: the feed behind the Activity "Prize points" tab. Kept out of
+# ACTIVITY_EVENTS so the per-URL timeline stays "what each kid saw", not the points ledger.
+PRIZE_EVENTS: tuple[str, ...] = ("prize_points_earned", "prize_points_redeemed")
+
 # AI activity-summary tuning. A saved summary older than this is "stale" → the dashboard
 # auto-regenerates it on load; summaries review a wider window than the timeline default.
 SUMMARY_STALE_AFTER_S = 48 * 3600
@@ -113,6 +124,18 @@ def _clamp_request_minutes(value: object) -> int | None:
         return None
     n = int(value)
     return n if 1 <= n <= _MAX_REQUEST_MINUTES else None
+
+
+# A parent's prize-point grant is a signed delta (positive award or negative correction);
+# bound the magnitude so a fat-fingered value can't mint an absurd balance.
+_MAX_PRIZE_POINTS = 100_000
+
+
+def _clamp_prize_points(value: object) -> int | None:
+    """Parse a grant delta: a non-zero int within ±_MAX_PRIZE_POINTS, else None."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value != 0 and abs(value) <= _MAX_PRIZE_POINTS else None
 
 
 def _block_reason(usage: object) -> str:
@@ -439,6 +462,7 @@ def _build_runtimes(
         search_block=KeywordStore(config.search_block_path),
         time_policy=TimePolicyStore(str(base / "time_policy.json")),
         time_request_store=TimeRequestStore(str(base / "time_requests.json")),
+        prize_point_store=PrizePointStore(str(base / "prize_points.json")),
         age=DEFAULT_AGE,
     )
     return {default.name: default}
@@ -1379,6 +1403,170 @@ def create_app(
             )
         return JSONResponse({"profiles": out})
 
+    def _prize_state(rt: ProfileRuntime, now: datetime) -> dict[str, Any]:
+        """A teen's prize balance + which redemption packages they can afford right now."""
+        balance = rt.prize_point_store.balance()
+        start, end = time_ledger.day_bounds_utc(now)
+        redeemed = redeemed_minutes_today(event_log, rt.name, start=start, end=end)
+        remaining_cap = max(0, config.prize_daily_bonus_cap_min - redeemed)
+        return {
+            "balance": balance,
+            "points_per_minute": POINTS_PER_MINUTE,
+            "daily_cap_min": config.prize_daily_bonus_cap_min,
+            "remaining_daily_bonus_min": remaining_cap,
+            "packages": [
+                {
+                    "minutes": minutes,
+                    "cost": cost_for_minutes(minutes),
+                    "affordable": (
+                        balance >= cost_for_minutes(minutes) and minutes <= remaining_cap
+                    ),
+                }
+                for minutes in REDEEM_PACKAGES_MIN
+            ],
+        }
+
+    async def prize_points_state(request: Request) -> JSONResponse:
+        # Teen-facing (token): current balance + affordable packages for the popup/block page.
+        rt = _resolve_runtime(request)
+        if rt is None:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        return JSONResponse(_prize_state(rt, datetime.now(UTC)))
+
+    async def prize_points_redeem(request: Request) -> JSONResponse:
+        # Teen-facing (token): spend points for bonus minutes — self-serve, no parent PIN.
+        rt = _resolve_runtime(request)
+        if rt is None:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        minutes = body.get("minutes")
+        if (
+            isinstance(minutes, bool)
+            or not isinstance(minutes, int)
+            or minutes not in REDEEM_PACKAGES_MIN
+        ):
+            return JSONResponse(
+                {"error": f"minutes must be one of {list(REDEEM_PACKAGES_MIN)}"},
+                status_code=422,
+            )
+        cost = cost_for_minutes(minutes)
+        now = datetime.now(UTC)
+        # Enforce the per-day bonus cap (independent of parent grants) before spending.
+        start, end = time_ledger.day_bounds_utc(now)
+        redeemed = redeemed_minutes_today(event_log, rt.name, start=start, end=end)
+        remaining_cap = max(0, config.prize_daily_bonus_cap_min - redeemed)
+        if minutes > remaining_cap:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "daily_cap_reached",
+                    "balance": rt.prize_point_store.balance(),
+                    "remaining_daily_bonus_min": remaining_cap,
+                },
+                status_code=409,
+            )
+        # Atomic spend: deduct only if the balance covers it (no double-click race).
+        new_balance = rt.prize_point_store.try_spend(cost)
+        if new_balance is None:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "insufficient_points",
+                    "balance": rt.prize_point_store.balance(),
+                },
+                status_code=409,
+            )
+        # Grant the bonus time via the same seam a parent approval uses, then record it.
+        time_ledger.add_grant(rt.name, minutes, now)
+        event_log.log(
+            "prize_points_redeemed",
+            profile=rt.name,
+            delta=-cost,
+            points=cost,
+            minutes_granted=minutes,
+            balance_after=new_balance,
+        )
+        metrics.record_prize_redeem(rt.name, cost, new_balance)
+        url = request.query_params.get("url", "").strip() or None
+        return JSONResponse(
+            {
+                "ok": True,
+                "granted_minutes": minutes,
+                "balance": new_balance,
+                **_time_state(rt, url, now),
+            }
+        )
+
+    async def review_prize_points(request: Request) -> JSONResponse:
+        # Parent-facing (PIN): each teen's balance + the redemption policy (Prize point page).
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        balances = [
+            {"profile": rt.name, "balance": rt.prize_point_store.balance()}
+            for rt in _pm.snapshot().values()
+        ]
+        return JSONResponse(
+            {
+                "points_per_minute": POINTS_PER_MINUTE,
+                "daily_cap_min": config.prize_daily_bonus_cap_min,
+                "packages": [
+                    {"minutes": minutes, "cost": cost_for_minutes(minutes)}
+                    for minutes in REDEEM_PACKAGES_MIN
+                ],
+                "balances": balances,
+            }
+        )
+
+    async def review_prize_grant(request: Request) -> JSONResponse:
+        # Parent-facing (PIN): award (or correct) a teen's prize points.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        profile = str(body.get("profile", "")).strip()
+        points = _clamp_prize_points(body.get("points"))
+        if points is None:
+            return JSONResponse(
+                {"error": f"points must be a non-zero integer within +-{_MAX_PRIZE_POINTS}"},
+                status_code=422,
+            )
+        owner = _pm.snapshot().get(profile)
+        if owner is None:
+            return JSONResponse({"error": "unknown profile"}, status_code=404)
+        raw_reason = body.get("reason")
+        reason = raw_reason.strip()[:200] if isinstance(raw_reason, str) else ""
+        balance = owner.prize_point_store.add(points)
+        event_log.log(
+            "prize_points_earned",
+            profile=owner.name,
+            delta=points,
+            reason=reason,
+            balance_after=balance,
+        )
+        metrics.record_prize_grant(owner.name, points, balance)
+        return JSONResponse({"ok": True, "profile": owner.name, "balance": balance})
+
+    async def review_prize_events(request: Request) -> JSONResponse:
+        # Parent-facing (PIN): the prize-point event feed for the Activity "Prize points" tab.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        profile = request.query_params.get("profile", "").strip() or None
+        limit = _parse_activity_limit(request.query_params.get("limit"))
+        loop = asyncio.get_running_loop()
+        events = await loop.run_in_executor(
+            None,
+            functools.partial(event_log.recent, limit, profile=profile, events=PRIZE_EVENTS),
+        )
+        return JSONResponse({"events": events})
+
     async def review_suggest_block_rule(request: Request) -> JSONResponse:
         # Optional aid for the reject flow: draft a natural-language "block similar content"
         # rule from a request's details. PIN-gated and READ-ONLY (no store mutation); strictly
@@ -2099,6 +2287,13 @@ def create_app(
             Route("/review/time-requests", review_time_requests, methods=["GET"]),
             Route("/review/time-decision", review_time_decision, methods=["POST"]),
             Route("/review/time/usage", review_time_usage, methods=["GET"]),
+            # Prize points: teen-facing (token) balance + self-serve redeem; parent-facing (PIN)
+            # grant, balances, and the event feed for the Activity "Prize points" tab.
+            Route("/prize-points", prize_points_state, methods=["GET"]),
+            Route("/prize-points/redeem", prize_points_redeem, methods=["POST"]),
+            Route("/review/prize-points", review_prize_points, methods=["GET"]),
+            Route("/review/prize-points/grant", review_prize_grant, methods=["POST"]),
+            Route("/review/prize-points/events", review_prize_events, methods=["GET"]),
             Route("/time/policy", time_policy_endpoint, methods=["GET", "PUT"]),
             Route("/time/policy/parse", time_policy_parse, methods=["POST"]),
             Route(
@@ -2159,5 +2354,9 @@ def create_app(
             ),
         ]
     )
+    # Seed the per-profile balance gauges so the 14-day prize-points line is continuous from
+    # startup (not just from the first grant/redeem of this process).
+    for _rt in _pm.snapshot().values():
+        metrics.seed_prize_balance(_rt.name, _rt.prize_point_store.balance())
     app.state.config = config
     return app

@@ -14,6 +14,7 @@ from .access_requests import RequestStore
 from .blocklist import BlocklistStore
 from .cache import VerdictCache
 from .keyword_store import KeywordStore
+from .prize_points import PrizePointStore
 from .profiles import Profile
 from .prompt import PromptStore
 from .time_policy import TimePolicyStore
@@ -40,6 +41,7 @@ class ProfileRuntime:
     search_block: KeywordStore
     time_policy: TimePolicyStore
     time_request_store: TimeRequestStore
+    prize_point_store: PrizePointStore
     age: int
 
 
@@ -78,5 +80,6 @@ def build_runtime(profile: Profile) -> ProfileRuntime:
         search_block=KeywordStore(profile.search_block_path),
         time_policy=TimePolicyStore(str(base / "time_policy.json")),
         time_request_store=TimeRequestStore(str(base / "time_requests.json")),
+        prize_point_store=PrizePointStore(str(base / "prize_points.json")),
         age=profile.age,
     )

@@ -111,3 +111,35 @@ def test_category_allowlist_is_exported() -> None:
     assert "scary" in CATEGORY_LABELS
     assert "unknown" in CATEGORY_LABELS
     assert "none" in CATEGORY_LABELS
+
+
+def test_record_prize_grant_counts_change_and_sets_balance() -> None:
+    m = _metrics()
+    m.record_prize_grant("Hei", 60, 60)
+    assert (
+        _val(m, "guardian_prize_points_changes_total", {"profile": "Hei", "direction": "grant"})
+        == 60.0
+    )
+    assert _val(m, "guardian_prize_points_balance", {"profile": "Hei"}) == 60.0
+
+
+def test_record_prize_redeem_counts_change_and_sets_balance() -> None:
+    m = _metrics()
+    m.record_prize_grant("Hei", 60, 60)
+    m.record_prize_redeem("Hei", 30, 30)
+    assert (
+        _val(m, "guardian_prize_points_changes_total", {"profile": "Hei", "direction": "redeem"})
+        == 30.0
+    )
+    # The gauge tracks the latest balance, not a running sum.
+    assert _val(m, "guardian_prize_points_balance", {"profile": "Hei"}) == 30.0
+
+
+def test_seed_prize_balance_sets_gauge_without_a_change_event() -> None:
+    m = _metrics()
+    m.seed_prize_balance("Hei", 42)
+    assert _val(m, "guardian_prize_points_balance", {"profile": "Hei"}) == 42.0
+    assert (
+        _val(m, "guardian_prize_points_changes_total", {"profile": "Hei", "direction": "grant"})
+        is None
+    )

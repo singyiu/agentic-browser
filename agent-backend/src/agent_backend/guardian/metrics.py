@@ -7,7 +7,7 @@ declared WITHOUT the ``_total`` suffix; prometheus_client appends it on expositi
 
 from __future__ import annotations
 
-from prometheus_client import CollectorRegistry, Counter, Histogram, start_http_server
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, start_http_server
 
 # Allowlist of category labels (the rubric.py taxonomy) plus safe buckets. Any value the
 # classifier emits outside this set is recorded as "unknown" to bound label cardinality.
@@ -91,6 +91,18 @@ class GuardianMetrics:
             ["decision"],
             registry=self.registry,
         )
+        self.prize_points_changes = Counter(
+            "guardian_prize_points_changes",
+            "Prize-point change events by profile and direction (grant|redeem).",
+            ["profile", "direction"],
+            registry=self.registry,
+        )
+        self.prize_points_balance = Gauge(
+            "guardian_prize_points_balance",
+            "Current prize-point balance per profile.",
+            ["profile"],
+            registry=self.registry,
+        )
 
     def record_classification(
         self, verdict: str, categories: tuple[str, ...], duration_ms: float, host: str
@@ -131,6 +143,26 @@ class GuardianMetrics:
     def record_access_decision(self, decision: str) -> None:
         """Record a parent decision (approve|reject) on an access request."""
         self.access_decisions.labels(decision=decision).inc()
+
+    def record_prize_grant(self, profile: str, points: int, balance: int) -> None:
+        """A parent granted ``points`` to ``profile``; ``balance`` is the new total."""
+        if points > 0:
+            self.prize_points_changes.labels(profile=profile, direction="grant").inc(points)
+        self.prize_points_balance.labels(profile=profile).set(balance)
+
+    def record_prize_redeem(self, profile: str, points: int, balance: int) -> None:
+        """A teen redeemed ``points`` for bonus time; ``balance`` is the new total."""
+        if points > 0:
+            self.prize_points_changes.labels(profile=profile, direction="redeem").inc(points)
+        self.prize_points_balance.labels(profile=profile).set(balance)
+
+    def seed_prize_balance(self, profile: str, balance: int) -> None:
+        """Initialize a profile's balance gauge at startup (no change event recorded).
+
+        Keeps the 14-day balance line continuous across restarts: without this the gauge
+        series would only appear after the first grant/redeem of the new process.
+        """
+        self.prize_points_balance.labels(profile=profile).set(balance)
 
 
 def start_metrics_server(metrics: GuardianMetrics, port: int) -> None:  # pragma: no cover

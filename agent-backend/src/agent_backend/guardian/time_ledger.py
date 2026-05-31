@@ -113,6 +113,14 @@ class TimeLedger:
         end_local = start_local + timedelta(days=1)
         return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
+    def day_bounds_utc(self, now: datetime) -> tuple[datetime, datetime]:
+        """UTC ``[start, end)`` of the household-local day containing ``now``.
+
+        Public wrapper so other accounting (e.g. the prize-point daily cap) shares the
+        exact same notion of "today" as screen-time, including the configured timezone.
+        """
+        return self._day_bounds_utc(now)
+
     # --- bucket management ---
 
     def _bucket(self, profile: str, now: datetime) -> _Bucket:

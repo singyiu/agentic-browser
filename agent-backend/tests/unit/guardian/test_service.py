@@ -18,6 +18,7 @@ from agent_backend.guardian.config import GuardianConfig
 from agent_backend.guardian.event_log import EventLog
 from agent_backend.guardian.keyword_store import KeywordStore
 from agent_backend.guardian.metrics import GuardianMetrics
+from agent_backend.guardian.prize_points import PrizePointStore
 from agent_backend.guardian.profile_manager import ProfileManager
 from agent_backend.guardian.profiles import load_profiles
 from agent_backend.guardian.prompt import PromptStore
@@ -1546,6 +1547,7 @@ def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
             search_block=KeywordStore(str(tmp_path / "alice_sb.json")),
             time_policy=TimePolicyStore(str(tmp_path / "alice_tp.json")),
             time_request_store=TimeRequestStore(str(tmp_path / "alice_treq.json")),
+            prize_point_store=PrizePointStore(str(tmp_path / "alice_pp.json")),
             age=12,
         ),
         "bob": ProfileRuntime(
@@ -1560,6 +1562,7 @@ def _two_profiles(tmp_path: Path) -> dict[str, ProfileRuntime]:
             search_block=KeywordStore(str(tmp_path / "bob_sb.json")),
             time_policy=TimePolicyStore(str(tmp_path / "bob_tp.json")),
             time_request_store=TimeRequestStore(str(tmp_path / "bob_treq.json")),
+            prize_point_store=PrizePointStore(str(tmp_path / "bob_pp.json")),
             age=10,
         ),
     }
@@ -2879,3 +2882,186 @@ def test_ext_crx_served_without_token(tmp_path: Path) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("application/x-chrome-extension")
     assert resp.content.startswith(b"Cr24")
+
+
+# --- prize points (grant / balance / redeem-for-time / events) ---------------
+
+
+def _prize_client(
+    tmp_path: Path, *, cap: int = 120
+) -> tuple[TestClient, EventLog, GuardianMetrics]:
+    """A two-teen client with a real (file-backed) event log so prize balances, the daily
+    cap (read from the log), and the event feed all persist across requests in one test."""
+    log = EventLog(str(tmp_path / "prize_events.jsonl"))
+    metrics = GuardianMetrics(registry=CollectorRegistry())
+    app = create_app(
+        replace(_config(), prize_daily_bonus_cap_min=cap),
+        classifier=FakeClassifier(Verdict("allow")),
+        event_log=log,
+        runtimes=_two_profiles(tmp_path),
+        metrics=metrics,
+    )
+    return TestClient(app), log, metrics
+
+
+def test_prize_grant_requires_pin(tmp_path: Path) -> None:
+    client, _log, _m = _prize_client(tmp_path)
+    # The PIN is configured (env pin), so a missing or wrong PIN header is rejected 403.
+    assert (
+        client.post(
+            "/review/prize-points/grant", json={"profile": "alice", "points": 10}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/review/prize-points/grant",
+            json={"profile": "alice", "points": 10},
+            headers={"X-Guardian-Parent-Pin": "wrong"},
+        ).status_code
+        == 403
+    )
+
+
+def test_prize_grant_increments_balance_logs_and_meters(tmp_path: Path) -> None:
+    client, log, metrics = _prize_client(tmp_path)
+    resp = client.post(
+        "/review/prize-points/grant",
+        json={"profile": "alice", "points": 60, "reason": "chores"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "profile": "alice", "balance": 60}
+    # The balances endpoint reflects it; bob (untouched) stays at 0.
+    listing = client.get("/review/prize-points", headers=_PIN).json()
+    by_profile = {b["profile"]: b["balance"] for b in listing["balances"]}
+    assert by_profile == {"alice": 60, "bob": 0}
+    assert listing["points_per_minute"] == 1
+    assert [p["minutes"] for p in listing["packages"]] == [15, 30, 60]
+    # Audit trail + metrics.
+    assert "prize_points_earned" in log.recent(10, profile="alice")[0]["event"]
+    assert (
+        metrics.registry.get_sample_value(
+            "guardian_prize_points_changes_total", {"profile": "alice", "direction": "grant"}
+        )
+        == 60.0
+    )
+    assert (
+        metrics.registry.get_sample_value("guardian_prize_points_balance", {"profile": "alice"})
+        == 60.0
+    )
+
+
+def test_prize_grant_rejects_unknown_profile_and_bad_points(tmp_path: Path) -> None:
+    client, _log, _m = _prize_client(tmp_path)
+    assert (
+        client.post(
+            "/review/prize-points/grant", json={"profile": "nobody", "points": 10}, headers=_PIN
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/review/prize-points/grant", json={"profile": "alice", "points": 0}, headers=_PIN
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/review/prize-points/grant",
+            json={"profile": "alice", "points": "lots"},
+            headers=_PIN,
+        ).status_code
+        == 422
+    )
+
+
+def test_prize_balance_endpoint_lists_affordable_packages(tmp_path: Path) -> None:
+    client, _log, _m = _prize_client(tmp_path)
+    client.post("/review/prize-points/grant", json={"profile": "alice", "points": 45}, headers=_PIN)
+    body = client.get("/prize-points", headers=_ALICE).json()
+    assert body["balance"] == 45
+    assert body["points_per_minute"] == 1
+    affordable = {p["minutes"]: p["affordable"] for p in body["packages"]}
+    assert affordable == {15: True, 30: True, 60: False}  # 45 points can't buy the 60-min pack
+
+
+def test_prize_redeem_grants_time_and_spends_points(tmp_path: Path) -> None:
+    client, log, metrics = _prize_client(tmp_path)
+    # Alice has a 60 min/day budget…
+    client.put("/time/policy?profile=alice", headers=_PIN, json={"daily_minutes": {"default": 60}})
+    before = client.get("/time/state?url=https://a.com/", headers=_ALICE).json()
+    assert before["general"]["limit_ms"] == 60 * 60_000
+    # …and 100 prize points.
+    client.post(
+        "/review/prize-points/grant", json={"profile": "alice", "points": 100}, headers=_PIN
+    )
+    resp = client.post("/prize-points/redeem", json={"minutes": 30}, headers=_ALICE)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["granted_minutes"] == 30
+    assert body["balance"] == 70
+    assert "general" in body  # the time-state envelope rides along so the UI can unblock
+    # The grant actually extended today's budget by 30 minutes.
+    after = client.get("/time/state?url=https://a.com/", headers=_ALICE).json()
+    assert after["general"]["limit_ms"] == 90 * 60_000
+    # Audit trail + metrics.
+    assert "prize_points_redeemed" in log.recent(10, profile="alice")[0]["event"]
+    assert (
+        metrics.registry.get_sample_value(
+            "guardian_prize_points_changes_total", {"profile": "alice", "direction": "redeem"}
+        )
+        == 30.0
+    )
+
+
+def test_prize_redeem_rejects_insufficient_points(tmp_path: Path) -> None:
+    client, _log, _m = _prize_client(tmp_path)
+    client.post("/review/prize-points/grant", json={"profile": "alice", "points": 10}, headers=_PIN)
+    resp = client.post("/prize-points/redeem", json={"minutes": 15}, headers=_ALICE)
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "insufficient_points"
+    # No points were spent on a rejected redeem.
+    assert client.get("/prize-points", headers=_ALICE).json()["balance"] == 10
+
+
+def test_prize_redeem_rejects_invalid_package(tmp_path: Path) -> None:
+    client, _log, _m = _prize_client(tmp_path)
+    client.post("/review/prize-points/grant", json={"profile": "alice", "points": 99}, headers=_PIN)
+    assert (
+        client.post("/prize-points/redeem", json={"minutes": 20}, headers=_ALICE).status_code == 422
+    )
+
+
+def test_prize_redeem_enforces_daily_cap(tmp_path: Path) -> None:
+    client, _log, _m = _prize_client(tmp_path, cap=40)
+    client.post(
+        "/review/prize-points/grant", json={"profile": "alice", "points": 200}, headers=_PIN
+    )
+    assert (
+        client.post("/prize-points/redeem", json={"minutes": 30}, headers=_ALICE).status_code == 200
+    )
+    # 30 already redeemed today; a second 30 would exceed the 40-minute daily cap.
+    resp = client.post("/prize-points/redeem", json={"minutes": 30}, headers=_ALICE)
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "daily_cap_reached"
+    assert resp.json()["remaining_daily_bonus_min"] == 10
+
+
+def test_prize_events_feed_lists_earned_and_redeemed(tmp_path: Path) -> None:
+    client, _log, _m = _prize_client(tmp_path)
+    client.post("/review/prize-points/grant", json={"profile": "alice", "points": 60}, headers=_PIN)
+    client.post("/prize-points/redeem", json={"minutes": 15}, headers=_ALICE)
+    events = client.get("/review/prize-points/events?profile=alice", headers=_PIN).json()["events"]
+    kinds = {e["event"] for e in events}
+    assert kinds == {"prize_points_earned", "prize_points_redeemed"}
+    redeemed = next(e for e in events if e["event"] == "prize_points_redeemed")
+    assert redeemed["minutes_granted"] == 15
+    assert redeemed["delta"] == -15
+
+
+def test_prize_endpoints_require_token(tmp_path: Path) -> None:
+    client, _log, _m = _prize_client(tmp_path)
+    assert client.get("/prize-points").status_code == 403
+    assert client.post("/prize-points/redeem", json={"minutes": 15}).status_code == 403

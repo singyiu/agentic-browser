@@ -28,6 +28,9 @@ DEFAULT_SEARCH_ALLOW_PATH = "data/guardian_search_allow.json"
 DEFAULT_SEARCH_BLOCK_PATH = "data/guardian_search_block.json"
 DEFAULT_PROFILES_PATH = "data/guardian_profiles.json"
 DEFAULT_ADMIN_PATH = "data/guardian_admin.json"
+# Cap on bonus minutes a teen can self-redeem from prize points per household-local day
+# (independent of parent grants). 0 disables self-serve redemption.
+DEFAULT_PRIZE_DAILY_BONUS_CAP_MIN = 120
 # Directory holding the packed extension CRX + update manifest (written by
 # scripts/pack-extension.sh) that the kid browser force-installs via policy.
 DEFAULT_EXT_DIST_DIR = ".chromium-dist"
@@ -69,6 +72,8 @@ class GuardianConfig:
     # Household timezone (IANA name, e.g. "America/Los_Angeles") used for screen-time day
     # boundaries and bedtime windows. Empty → the server's local timezone.
     household_tz: str = ""
+    # Max bonus minutes a teen may self-redeem from prize points per day (0 disables it).
+    prize_daily_bonus_cap_min: int = DEFAULT_PRIZE_DAILY_BONUS_CAP_MIN
     # Directory with the packed extension CRX + update manifest served at /ext/* so the
     # kid browser can force-install the extension. Relative paths resolve from the
     # service working directory (agent-backend/), matching the data/ convention.
@@ -106,6 +111,13 @@ class GuardianConfig:
                 _clean(e.get("GUARDIAN_SUMMARY_LOG_PATH")) or DEFAULT_SUMMARY_LOG_PATH
             ),
             household_tz=_clean(e.get("GUARDIAN_HOUSEHOLD_TZ")),
+            prize_daily_bonus_cap_min=max(
+                0,
+                int(
+                    _clean(e.get("GUARDIAN_PRIZE_DAILY_CAP_MIN"))
+                    or DEFAULT_PRIZE_DAILY_BONUS_CAP_MIN
+                ),
+            ),
             ext_dist_dir=_clean(e.get("GUARDIAN_EXT_DIST_DIR")) or DEFAULT_EXT_DIST_DIR,
             whitelist_path=_clean(e.get("GUARDIAN_WHITELIST_PATH")) or DEFAULT_WHITELIST_PATH,
             blocklist_path=_clean(e.get("GUARDIAN_BLOCKLIST_PATH")) or DEFAULT_BLOCKLIST_PATH,
