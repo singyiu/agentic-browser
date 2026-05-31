@@ -428,6 +428,16 @@
               >
                 Summaries
               </button>
+              <button
+                id="act-tab-screentime-btn"
+                class="act-tab"
+                role="tab"
+                type="button"
+                aria-selected="false"
+                aria-controls="act-tab-screentime"
+              >
+                Screen time
+              </button>
             </div>
             <div
               id="act-tab-timeline"
@@ -465,6 +475,35 @@
               <div id="act-summaries-list"></div>
               <p id="act-summaries-empty" class="muted" hidden>
                 No summaries generated yet.
+              </p>
+            </div>
+            <div
+              id="act-tab-screentime"
+              role="tabpanel"
+              aria-labelledby="act-tab-screentime-btn"
+              tabindex="0"
+              hidden
+            >
+              <div class="card st-controls">
+                <label class="settings-field" for="act-st-profile">Profile</label>
+                <select id="act-st-profile" class="wl-profile-select"></select>
+                <label class="settings-field" for="act-st-window">Window</label>
+                <select id="act-st-window" class="wl-profile-select">
+                  <option value="now-24h">Last 24 hours</option>
+                  <option value="now-48h" selected>Last 48 hours</option>
+                  <option value="now-7d">Last 7 days</option>
+                </select>
+              </div>
+              <iframe
+                id="act-st-frame"
+                class="st-frame st-frame--tall"
+                title="Website time for the selected profile and window"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                hidden
+              ></iframe>
+              <p id="act-st-empty" class="muted" hidden>
+                No kid profiles yet — add one in Profiles to see screen time.
               </p>
             </div>
           </section>
@@ -722,7 +761,7 @@
     <script src="/static/activity.js?v=2"></script>
     <script src="/static/summary.js?v=1"></script>
     <script src="/static/time-core.js?v=2"></script>
-    <script src="/static/shell.js?v=11"></script>
+    <script src="/static/shell.js?v=12"></script>
     <script src="/static/profiles.js"></script>
     <script src="/static/time.js?v=1"></script>
   </body>

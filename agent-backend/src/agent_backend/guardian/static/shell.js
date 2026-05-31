@@ -1566,14 +1566,51 @@
     $("act-empty").hidden = events.length > 0;
   }
 
-  /* ---------- Activity tabs: Timeline | Summaries ---------- */
+  /* ---------- Activity tabs: Websites | Summaries | Screen time ---------- */
   function setActivityTab(name) {
-    const timeline = name !== "summaries";
-    $("act-tab-timeline").hidden = !timeline;
-    $("act-tab-summaries").hidden = timeline;
-    $("act-tab-timeline-btn").setAttribute("aria-selected", String(timeline));
-    $("act-tab-summaries-btn").setAttribute("aria-selected", String(!timeline));
-    if (!timeline) loadActivitySummariesTab();
+    const tabs = ["timeline", "summaries", "screentime"];
+    const active = tabs.includes(name) ? name : "timeline";
+    for (const t of tabs) {
+      $("act-tab-" + t).hidden = t !== active;
+      $("act-tab-" + t + "-btn").setAttribute(
+        "aria-selected",
+        String(t === active),
+      );
+    }
+    if (active === "summaries") loadActivitySummariesTab();
+    else if (active === "screentime") loadScreenTimeTab();
+  }
+
+  // The "Screen time" tab (#3): website -> time for one profile over a window (default 48h),
+  // embedded from Grafana (panel 12 via soloUrl). The in-app selects drive the iframe's profile
+  // + range; the data + table live in Grafana, so there's no PIN-gated fetch here.
+  async function loadScreenTimeTab() {
+    const sel = $("act-st-profile");
+    if (sel && !sel.dataset.filled) {
+      const profiles = await fetchProfiles();
+      if (profiles) {
+        const teens = profiles.filter((p) => !p.is_global).map((p) => p.name);
+        sel.replaceChildren(
+          ...teens.map((name) => el("option", { value: name, text: name })),
+        );
+        sel.dataset.filled = "1";
+      }
+    }
+    renderScreenTimeFrame();
+  }
+
+  // Point the Screen time iframe at the selected profile + window, or show the empty state when
+  // there are no teen profiles to chart.
+  function renderScreenTimeFrame() {
+    const frame = $("act-st-frame");
+    if (!frame) return;
+    const profile = $("act-st-profile").value;
+    const win = $("act-st-window").value || "now-48h";
+    const hasProfile = Boolean(profile);
+    $("act-st-empty").hidden = hasProfile;
+    frame.hidden = !hasProfile;
+    if (hasProfile) frame.src = soloUrl(12, { profile, from: win, to: "now" });
+    else frame.removeAttribute("src");
   }
 
   // The "Summaries" tab: saved summary runs, newest-first (server order). A profile selector
@@ -1900,7 +1937,12 @@
     $("act-tab-summaries-btn").addEventListener("click", () =>
       setActivityTab("summaries"),
     );
+    $("act-tab-screentime-btn").addEventListener("click", () =>
+      setActivityTab("screentime"),
+    );
     $("act-sum-profile").addEventListener("change", renderActivitySummaries);
+    $("act-st-profile").addEventListener("change", renderScreenTimeFrame);
+    $("act-st-window").addEventListener("change", renderScreenTimeFrame);
     if (ASUM)
       $("dash-summary-refresh").addEventListener("click", () =>
         refreshActivitySummary({ auto: false }),
