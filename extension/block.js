@@ -161,6 +161,95 @@ async function checkApproved() {
 requestBtn.addEventListener("click", submitRequest);
 checkBtn.addEventListener("click", checkApproved);
 
+// --- Prize points: spend points for instant bonus time (time-limit blocks only) ---
+// The kid can redeem points for more minutes without waiting for a parent. Only shown when this
+// is a time-limit block AND they have enough points for at least one package (within the day cap).
+async function initPrizeRedeem() {
+  if (!isTime) return;
+  let data;
+  try {
+    const cfg = await getConfig();
+    const resp = await fetch(`${cfg.endpoint}/prize-points`, {
+      headers: { "X-Guardian-Token": cfg.token },
+    });
+    if (!resp.ok) return;
+    data = await resp.json();
+  } catch (_e) {
+    return; // offline / no points service → fall back to the request-a-parent flow
+  }
+  const balance = Number(data.balance || 0);
+  const packages = Array.isArray(data.packages) ? data.packages : [];
+  if (balance <= 0 || !packages.some((p) => p.affordable)) return;
+  document.getElementById("prize-balance").textContent =
+    "You have " + balance + (balance === 1 ? " prize point" : " prize points");
+  const pkgWrap = document.getElementById("prize-packages");
+  pkgWrap.replaceChildren();
+  for (const p of packages) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "pkg";
+    btn.textContent = "+" + p.minutes + " min · " + p.cost + " pts";
+    btn.dataset.afford = p.affordable ? "1" : "";
+    btn.disabled = !p.affordable;
+    btn.addEventListener("click", () => redeem(p.minutes));
+    pkgWrap.append(btn);
+  }
+  document.getElementById("prize-section").hidden = false;
+}
+
+async function redeem(minutes) {
+  const status = document.getElementById("prize-status");
+  const btns = [...document.querySelectorAll("#prize-packages .pkg")];
+  btns.forEach((b) => (b.disabled = true));
+  status.textContent = "Redeeming…";
+  try {
+    const cfg = await getConfig();
+    const resp = await fetch(`${cfg.endpoint}/prize-points/redeem`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Guardian-Token": cfg.token,
+      },
+      body: JSON.stringify({ minutes }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.ok && data.ok) {
+      status.textContent = "You got " + minutes + " more minutes! Opening…";
+      await openAfterRedeem();
+    } else {
+      status.textContent =
+        data.error === "daily_cap_reached"
+          ? "You've hit today's bonus-time limit."
+          : data.error === "insufficient_points"
+            ? "You don't have enough points."
+            : "Couldn't redeem right now.";
+      // Re-enable only the packages that were affordable before.
+      btns.forEach((b) => (b.disabled = b.dataset.afford !== "1"));
+    }
+  } catch (_e) {
+    status.textContent = "Couldn't reach the guardian service.";
+    btns.forEach((b) => (b.disabled = b.dataset.afford !== "1"));
+  }
+}
+
+async function openAfterRedeem() {
+  // Return to the page that was blocked (now within budget). Clear the SW's short-lived verdict
+  // cache first so the navigation re-checks the backend instead of re-blocking on a stale verdict.
+  if (!/^https?:\/\//i.test(blockedUrl || "")) {
+    location.reload();
+    return;
+  }
+  try {
+    await chrome.runtime.sendMessage({
+      type: "CLEAR_HOTCACHE",
+      url: blockedUrl,
+    });
+  } catch (_e) {
+    /* SW may be asleep; the navigation will still re-check time */
+  }
+  location.replace(blockedUrl);
+}
+
 // On load, restore the UI if a request for this URL already exists (survives reloads).
 async function restoreState() {
   if (!blockedUrl) return;
@@ -182,3 +271,4 @@ async function restoreState() {
   }
 }
 restoreState();
+initPrizeRedeem();

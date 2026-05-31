@@ -54,6 +54,7 @@ async function load() {
   const cfg = await getConfig();
   const url = await activeUrl();
   let state = null;
+  let prize = null;
   try {
     const r = await fetch(
       `${cfg.endpoint}/time/state?url=${encodeURIComponent(url)}`,
@@ -65,10 +66,91 @@ async function load() {
   } catch (_e) {
     /* offline -> render the error state */
   }
-  render(state, cfg);
+  try {
+    const r = await fetch(`${cfg.endpoint}/prize-points`, {
+      headers: { "X-Guardian-Token": cfg.token },
+    });
+    if (r.ok) prize = await r.json();
+  } catch (_e) {
+    /* no points service -> just omit the prize section */
+  }
+  render(state, cfg, prize);
 }
 
-function render(state, cfg) {
+// A balance line + package buttons for spending points on more time (#3: check balance from the
+// icon; #2: redeem from the icon). Returns null when there's nothing useful to show.
+function prizeBlock(prize, cfg) {
+  if (!prize) return null;
+  const balance = Number(prize.balance || 0);
+  const packages = Array.isArray(prize.packages) ? prize.packages : [];
+  const wrap = el(
+    "div",
+    { class: "pp" },
+    el("p", {
+      class: "pp__bal",
+      text:
+        "🎟️ " + balance + (balance === 1 ? " prize point" : " prize points"),
+    }),
+  );
+  const affordable = packages.filter((p) => p.affordable);
+  if (balance > 0 && affordable.length) {
+    const status = el("p", { class: "pp__status" });
+    const pkgs = el("div", { class: "pp__pkgs" });
+    for (const p of packages) {
+      const b = el("button", {
+        type: "button",
+        text: "+" + p.minutes + "m · " + p.cost,
+        title: "Spend " + p.cost + " points for " + p.minutes + " more minutes",
+      });
+      b.disabled = !p.affordable;
+      b.addEventListener("click", () =>
+        redeemPoints(p.minutes, cfg, pkgs, status),
+      );
+      pkgs.append(b);
+    }
+    wrap.append(
+      el("p", { class: "pp__lead", text: "Spend points for more time:" }),
+      pkgs,
+      status,
+    );
+  }
+  return wrap;
+}
+
+async function redeemPoints(minutes, cfg, pkgs, status) {
+  const btns = [...pkgs.querySelectorAll("button")];
+  const wasEnabled = btns.filter((b) => !b.disabled);
+  btns.forEach((b) => (b.disabled = true));
+  status.textContent = "Redeeming…";
+  try {
+    const r = await fetch(`${cfg.endpoint}/prize-points/redeem`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Guardian-Token": cfg.token,
+      },
+      body: JSON.stringify({ minutes }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.ok) {
+      status.textContent = "Added " + minutes + " min!";
+      load(); // refresh the time bar + balance
+    } else {
+      status.textContent =
+        data.error === "daily_cap_reached"
+          ? "Daily bonus limit reached."
+          : data.error === "insufficient_points"
+            ? "Not enough points."
+            : "Couldn’t redeem.";
+      wasEnabled.forEach((b) => (b.disabled = false));
+    }
+  } catch (_e) {
+    status.textContent = "Couldn’t reach the guardian.";
+    wasEnabled.forEach((b) => (b.disabled = false));
+  }
+}
+
+function render(state, cfg, prize) {
   const body = $("body");
   body.replaceChildren();
   if (!state) {
@@ -86,6 +168,8 @@ function render(state, cfg) {
         text: "No screen-time limit is set for this profile.",
       }),
     );
+    const ppNoLimit = prizeBlock(prize, cfg);
+    if (ppNoLimit) body.append(ppNoLimit);
     return;
   }
 
@@ -130,6 +214,9 @@ function render(state, cfg) {
         fmtMin(s.limit_ms);
     if (line) body.append(el("div", { class: "site", text: line }));
   }
+
+  const pp = prizeBlock(prize, cfg);
+  if (pp) body.append(pp);
 
   const reason = el("textarea", {
     rows: "2",
