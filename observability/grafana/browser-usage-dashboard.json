@@ -145,6 +145,18 @@
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "align": "auto", "filterable": true } }, "overrides": [] },
       "options": { "showHeader": true, "sortBy": [{ "displayName": "Value", "desc": true }] },
       "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "topk(20, sum by (host) (increase(guardian_dwell_seconds_total{profile=~\"$profile\"}[$__range])))", "instant": true, "format": "table" }]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Prize points per profile",
+      "description": "Current prize-point balance over time, one line per kid profile (the global profile is excluded). Embedded on the guardian Prize point page over a 14-day range.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 54 },
+      "maxDataPoints": 5000,
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "pointSize": 6, "showPoints": "auto", "lineInterpolation": "stepAfter", "spanNulls": true } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "guardian_prize_points_balance{profile!=\"\", profile!=\"global\"}", "legendFormat": "{{profile}}" }]
     }
   ]
 }
