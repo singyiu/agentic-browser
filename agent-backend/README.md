@@ -387,6 +387,32 @@ cd ../observability && docker compose up -d
 - Per-profile series populate as the kid browses (a Prometheus counter first appears on its initial
   increment), so a freshly restarted guardian shows an empty chart until some dwell accrues.
 
+## Prize points (gamified time)
+
+Prize points turn time management into a reward loop:
+
+- **Guardian → "Prize point" page** — grant points to a kid and see every kid's balance. The
+  14-day balance chart embeds Grafana panel 13 (one line per kid profile; the global profile is
+  excluded).
+- **Kid browser** — when time's up, the block page offers **"Spend points for time"** packages
+  (**+15 / +30 / +60 min**); the toolbar popup shows the current balance and the same packages.
+  Redeeming is **self-serve — no parent approval** — at `1 point = 1 minute`.
+- **Activity → "Prize points" tab** — the ledger of grants and redemptions, filterable by kid.
+
+Guardrails: redemption is bounded by the kid's balance (the parent controls supply by how many
+points they grant) **and** a daily cap on self-redeemed bonus minutes
+(`GUARDIAN_PRIZE_DAILY_CAP_MIN`, default `120`). Balances are stored durably per profile
+(`data/profiles/<name>/prize_points.json`); every change is also appended to the event log and
+published to Prometheus (a `guardian_prize_points_balance{profile}` gauge + a
+`guardian_prize_points_changes_total{profile, direction}` counter), so the chart and the ledger
+stay consistent across restarts.
+
+Endpoints — parent (PIN): `POST /review/prize-points/grant`, `GET /review/prize-points`,
+`GET /review/prize-points/events`; kid (token): `GET /prize-points`, `POST /prize-points/redeem`.
+
+Like the screen-time chart, the balance chart requires the observability stack
+(`cd ../observability && docker compose up -d`).
+
 ## MCP tools
 
 `browser_navigate`, `browser_snapshot` (accessibility tree), `browser_click`,

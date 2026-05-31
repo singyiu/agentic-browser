@@ -14,6 +14,7 @@ over `host.docker.internal` and reads host log files through read-only bind moun
 | Guardian events | `agent-backend/data/guardian_events.jsonl` | Loki `{job="guardian"}` |
 | Chromium process logs | `.chromium-profile/chrome_debug.log` | Loki `{job="chromium"}` |
 | Browser dwell time | extension → `POST /dwell` → guardian | Prometheus `guardian_dwell_seconds_total{host, profile}` |
+| Prize points | guardian grant / kid redeem | Prometheus `guardian_prize_points_balance{profile}` (gauge), `guardian_prize_points_changes_total{profile, direction}` |
 | Claude Code transcripts | `~/.claude/projects/.../*.jsonl` (opt-in, **redacted**) | Loki `{job="claude_transcript"}` |
 
 ## Quick start
@@ -54,6 +55,16 @@ A `profile` dashboard variable (`label_values(guardian_dwell_seconds_total, prof
 `docker-compose.yml`). Without it Grafana sends `X-Frame-Options: deny` and the iframes are refused.
 Combined with the existing anonymous-Admin auth, the embedded panels render with no login — fine on
 this loopback host (note the screen-time iframes are therefore not behind the guardian's parent PIN).
+
+## Per-profile prize points (embedded in the guardian dashboard)
+
+The guardian "Prize point" page embeds **Panel 13 — "Prize points per profile"** (`timeseries`):
+`guardian_prize_points_balance{profile!="", profile!="global"}` over a 14-day range, one line per
+kid. The balance is a gauge (re-seeded on guardian startup from each profile's stored balance), so
+the line is continuous — it steps **up** on a parent grant and **down** on a kid redemption. The
+companion counter `guardian_prize_points_changes_total{profile, direction}` (direction `grant` |
+`redeem`) tracks change events. Same embedding + anonymous-Admin caveats as the screen-time panels
+above.
 
 ## Enabling Claude transcript ingestion (opt-in)
 
