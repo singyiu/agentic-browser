@@ -1002,3 +1002,11 @@
   color: var(--fg-2);
   font-variant-numeric: tabular-nums;
 }
+.pp-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--fg-2);
+}

@@ -1666,7 +1666,7 @@
 
   /* ---------- Activity tabs: Websites | Summaries | Screen time ---------- */
   function setActivityTab(name) {
-    const tabs = ["timeline", "summaries", "screentime"];
+    const tabs = ["timeline", "summaries", "screentime", "prizepoints"];
     const active = tabs.includes(name) ? name : "timeline";
     for (const t of tabs) {
       $("act-tab-" + t).hidden = t !== active;
@@ -1677,6 +1677,7 @@
     }
     if (active === "summaries") loadActivitySummariesTab();
     else if (active === "screentime") loadScreenTimeTab();
+    else if (active === "prizepoints") loadPrizePointsTab();
   }
 
   // The "Screen time" tab (#3): website -> time for one profile over a window (default 48h),
@@ -1709,6 +1710,70 @@
     frame.hidden = !hasProfile;
     if (hasProfile) frame.src = soloUrl(12, { profile, from: win, to: "now" });
     else frame.removeAttribute("src");
+  }
+
+  // The "Prize points" tab (#5): the prize-point event ledger (parent grants + kid redemptions),
+  // newest-first, optionally narrowed to one kid. PIN-gated fetch from the prize events feed.
+  async function loadPrizePointsTab() {
+    const sel = $("act-pp-profile");
+    if (sel && !sel.dataset.filled) {
+      const profiles = await fetchProfiles();
+      if (profiles) {
+        const teens = profiles.filter((p) => !p.is_global).map((p) => p.name);
+        sel.replaceChildren(
+          el("option", { value: "", text: "All profiles" }),
+          ...teens.map((name) => el("option", { value: name, text: name })),
+        );
+        sel.dataset.filled = "1";
+      }
+    }
+    await renderPrizePointsList();
+  }
+
+  async function renderPrizePointsList() {
+    const profile = $("act-pp-profile").value;
+    const qs = profile ? "?profile=" + encodeURIComponent(profile) : "";
+    let r;
+    try {
+      r = await api("/review/prize-points/events" + qs);
+    } catch (_e) {
+      toast("Could not reach the guardian service.");
+      return;
+    }
+    if (!r.ok) {
+      toast("Could not load prize points (" + r.status + ").");
+      return;
+    }
+    const events = (await r.json()).events || [];
+    $("act-pp-empty").hidden = events.length > 0;
+    $("act-pp-list").replaceChildren(...events.map(prizePointRow));
+  }
+
+  // One ledger row: a signed points badge (green earn / terra redeem), the profile, a short note
+  // (the parent's reason, or the minutes a redemption bought), and a relative timestamp.
+  function prizePointRow(ev) {
+    const delta = Number(ev.delta || 0);
+    const earned = delta >= 0;
+    const magnitude = Math.abs(delta);
+    const pts =
+      (earned ? "+" : "−") + magnitude + (magnitude === 1 ? " pt" : " pts");
+    const note =
+      ev.event === "prize_points_redeemed"
+        ? "redeemed for " + (ev.minutes_granted || 0) + " min"
+        : ev.reason || "granted";
+    return el(
+      "div",
+      { class: "recent-row" },
+      el("span", {
+        class: "badge " + (earned ? "approved" : "rejected"),
+        text: pts,
+      }),
+      ev.profile
+        ? el("span", { class: "badge profile", text: ev.profile })
+        : null,
+      el("span", { class: "pp-note", title: note, text: note }),
+      el("span", { class: "muted", text: timeAgo(ev.ts) }),
+    );
   }
 
   // The "Summaries" tab: saved summary runs, newest-first (server order). A profile selector
@@ -2039,6 +2104,10 @@
     $("act-tab-screentime-btn").addEventListener("click", () =>
       setActivityTab("screentime"),
     );
+    $("act-tab-prizepoints-btn").addEventListener("click", () =>
+      setActivityTab("prizepoints"),
+    );
+    $("act-pp-profile").addEventListener("change", renderPrizePointsList);
     $("act-sum-profile").addEventListener("change", renderActivitySummaries);
     $("act-st-profile").addEventListener("change", renderScreenTimeFrame);
     $("act-st-window").addEventListener("change", renderScreenTimeFrame);

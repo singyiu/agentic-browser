@@ -12,7 +12,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-180.png" />
     <link rel="stylesheet" href="/static/aegis-tokens.css?v=2" />
     <link rel="stylesheet" href="/static/aegis-components.css?v=4" />
-    <link rel="stylesheet" href="/static/aegis-shell.css?v=12" />
+    <link rel="stylesheet" href="/static/aegis-shell.css?v=13" />
   </head>
   <body>
     <!-- Parent PIN gate: shown until the parent unlocks (the page is only ever
@@ -460,6 +460,16 @@
               >
                 Screen time
               </button>
+              <button
+                id="act-tab-prizepoints-btn"
+                class="act-tab"
+                role="tab"
+                type="button"
+                aria-selected="false"
+                aria-controls="act-tab-prizepoints"
+              >
+                Prize points
+              </button>
             </div>
             <div
               id="act-tab-timeline"
@@ -526,6 +536,24 @@
               ></iframe>
               <p id="act-st-empty" class="muted" hidden>
                 No kid profiles yet — add one in Profiles to see screen time.
+              </p>
+            </div>
+            <div
+              id="act-tab-prizepoints"
+              role="tabpanel"
+              aria-labelledby="act-tab-prizepoints-btn"
+              tabindex="0"
+              hidden
+            >
+              <div class="card">
+                <label class="settings-field" for="act-pp-profile">
+                  Profile
+                </label>
+                <select id="act-pp-profile" class="wl-profile-select"></select>
+              </div>
+              <div id="act-pp-list"></div>
+              <p id="act-pp-empty" class="muted" hidden>
+                No prize-point activity yet.
               </p>
             </div>
           </section>
@@ -862,7 +890,7 @@
     <script src="/static/activity.js?v=2"></script>
     <script src="/static/summary.js?v=1"></script>
     <script src="/static/time-core.js?v=2"></script>
-    <script src="/static/shell.js?v=13"></script>
+    <script src="/static/shell.js?v=14"></script>
     <script src="/static/profiles.js"></script>
     <script src="/static/time.js?v=1"></script>
   </body>
