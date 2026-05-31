@@ -136,6 +136,7 @@
       toast("Could not reach the guardian service.");
     }
     loadActivitySummary(); // fire-and-forget; the AI panel has its own loading + error handling
+    loadScreenTimeChart(); // fire-and-forget embed of the Grafana per-profile screen-time chart
   }
 
   // Re-render the dashboard tiles from current store state (called by the store subscriber).
@@ -176,6 +177,43 @@
       location.hash = hash;
     });
     return tile;
+  }
+
+  /* ---------- Screen time (embedded Grafana panels) ---------- */
+  /* The dashboard line chart (#2) and the Activity "Screen time" tab (#3) embed provisioned
+     panels from the local observability stack's "guardian-browser-usage" Grafana dashboard via
+     Grafana's d-solo render. The data + charting live in Grafana; we only point an <iframe> at
+     it, so there's no PIN-gated fetch here (Grafana serves the panels on loopback). */
+  const GRAFANA_BASE = "http://localhost:3000"; // observability/docker-compose.yml (GRAFANA_PORT)
+  const GRAFANA_DASH_UID = "guardian-browser-usage";
+
+  // Build a Grafana solo-panel URL for an <iframe>. `from`/`to` take Grafana relative ranges
+  // (e.g. "now-48h"); `profile`, when set, selects the dashboard's `profile` template variable.
+  function soloUrl(panelId, { profile, from = "now-14d", to = "now" } = {}) {
+    const p = new URLSearchParams({
+      orgId: "1",
+      panelId: String(panelId),
+      theme: "light",
+      from,
+      to,
+    });
+    if (profile) p.set("var-profile", profile);
+    return (
+      GRAFANA_BASE +
+      "/d-solo/" +
+      GRAFANA_DASH_UID +
+      "/screen-time?" +
+      p.toString()
+    );
+  }
+
+  // Dashboard line chart (#2): total screen time per day, one series per profile. Loaded once per
+  // page session (Grafana self-refreshes), so re-routing to the dashboard doesn't reload it.
+  function loadScreenTimeChart() {
+    const frame = $("dash-st-frame");
+    if (!frame || frame.dataset.loaded) return;
+    frame.src = soloUrl(11, { from: "now-14d", to: "now" });
+    frame.dataset.loaded = "1";
   }
 
   /* ---------- Dashboard: AI activity summary ---------- */
