@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from prometheus_client import CollectorRegistry
 from starlette.testclient import TestClient
 
 from agent_backend.guardian.access_requests import RequestStore
@@ -16,6 +17,7 @@ from agent_backend.guardian.cache import CacheEntry
 from agent_backend.guardian.config import GuardianConfig
 from agent_backend.guardian.event_log import EventLog
 from agent_backend.guardian.keyword_store import KeywordStore
+from agent_backend.guardian.metrics import GuardianMetrics
 from agent_backend.guardian.profile_manager import ProfileManager
 from agent_backend.guardian.profiles import load_profiles
 from agent_backend.guardian.prompt import PromptStore
@@ -158,6 +160,7 @@ def _client(
     parent_pin: str = "testpin",
     admin_path: str = ":memory:",
     summary_log: object = None,
+    metrics: object = None,
 ) -> TestClient:
     kwargs: dict[str, object] = {}
     if whitelist is not None:
@@ -166,6 +169,8 @@ def _client(
         kwargs["request_store"] = request_store
     if summary_log is not None:
         kwargs["summary_log"] = summary_log
+    if metrics is not None:
+        kwargs["metrics"] = metrics
     app = create_app(
         _config(parent_pin=parent_pin, admin_path=admin_path),
         classifier=classifier,
@@ -246,6 +251,21 @@ def test_dwell_records_event() -> None:
     )
     assert resp.json()["ok"] is True
     assert "dwell" in log.events
+
+
+def test_dwell_labels_metric_with_host_and_profile() -> None:
+    metrics = GuardianMetrics(registry=CollectorRegistry())
+    resp = _client(FakeClassifier(Verdict("allow")), metrics=metrics).post(
+        "/dwell", json={"url_key": "https://youtube.com/watch", "dwell_ms": 5000}, headers=_HEADERS
+    )
+    assert resp.json()["ok"] is True
+    # Token "secret" resolves to the single "default" profile; dwell_ms is 5s.
+    assert (
+        metrics.registry.get_sample_value(
+            "guardian_dwell_seconds_total", {"host": "youtube.com", "profile": "default"}
+        )
+        == 5.0
+    )
 
 
 def test_dwell_forbidden_without_token() -> None:

@@ -53,15 +53,29 @@ def test_record_fail_open_counts_verdict_and_visit() -> None:
 
 def test_record_dwell_accumulates_seconds() -> None:
     m = _metrics()
-    m.record_dwell("youtube.com", 12.5)
-    m.record_dwell("youtube.com", 7.5)
-    assert _val(m, "guardian_dwell_seconds_total", {"host": "youtube.com"}) == 20.0
+    m.record_dwell("youtube.com", "Hei", 12.5)
+    m.record_dwell("youtube.com", "Hei", 7.5)
+    assert (
+        _val(m, "guardian_dwell_seconds_total", {"host": "youtube.com", "profile": "Hei"}) == 20.0
+    )
 
 
 def test_record_dwell_ignores_negative() -> None:
     m = _metrics()
-    m.record_dwell("example.com", -5.0)
-    assert _val(m, "guardian_dwell_seconds_total", {"host": "example.com"}) is None
+    m.record_dwell("example.com", "Hei", -5.0)
+    assert (
+        _val(m, "guardian_dwell_seconds_total", {"host": "example.com", "profile": "Hei"}) is None
+    )
+
+
+def test_record_dwell_separates_by_profile() -> None:
+    m = _metrics()
+    m.record_dwell("youtube.com", "Hei", 10.0)
+    m.record_dwell("youtube.com", "Mei", 4.0)
+    assert (
+        _val(m, "guardian_dwell_seconds_total", {"host": "youtube.com", "profile": "Hei"}) == 10.0
+    )
+    assert _val(m, "guardian_dwell_seconds_total", {"host": "youtube.com", "profile": "Mei"}) == 4.0
 
 
 def test_record_whitelist_hit_counts_hit_and_visit() -> None:

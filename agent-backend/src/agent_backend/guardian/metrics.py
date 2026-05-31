@@ -64,8 +64,8 @@ class GuardianMetrics:
         )
         self.dwell_seconds = Counter(
             "guardian_dwell_seconds",
-            "Accumulated dwell time in seconds by host.",
-            ["host"],
+            "Accumulated dwell time in seconds by host and profile.",
+            ["host", "profile"],
             registry=self.registry,
         )
         self.cache_hits = Counter(
@@ -118,11 +118,11 @@ class GuardianMetrics:
         self.whitelist_hits.labels(host=host).inc()
         self.visits.labels(host=host).inc()
 
-    def record_dwell(self, host: str, seconds: float) -> None:
-        """Add observed time-on-page (seconds) for a host. Negative values are ignored."""
+    def record_dwell(self, host: str, profile: str, seconds: float) -> None:
+        """Add observed time-on-page (seconds) for a host+profile. Negatives are ignored."""
         if seconds < 0:
             return
-        self.dwell_seconds.labels(host=host).inc(seconds)
+        self.dwell_seconds.labels(host=host, profile=profile).inc(seconds)
 
     def record_access_request(self, host: str) -> None:
         """Record a teen access request submitted from a block page."""

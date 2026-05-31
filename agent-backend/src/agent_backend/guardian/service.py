@@ -774,7 +774,7 @@ def create_app(
         # Account before logging: the first touch of the day seeds from the log as it stands,
         # so counting this not-yet-logged event separately avoids a double count.
         time_ledger.add_dwell(rt.name, host, int(dwell_ms), now)
-        metrics.record_dwell(host, float(dwell_ms) / 1000.0)
+        metrics.record_dwell(host, rt.name, float(dwell_ms) / 1000.0)
         event_log.log("dwell", url_key=url_key, host=host, dwell_ms=int(dwell_ms), profile=rt.name)
         # Return the current time-state so the extension's heartbeat can enforce immediately.
         return JSONResponse({"ok": True, **_time_state(rt, url_key, now)})
