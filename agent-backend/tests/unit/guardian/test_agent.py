@@ -174,6 +174,20 @@ def test_chat_unknown_profile_404() -> None:
     assert resp.status_code == 404
 
 
+def test_chat_null_profile_is_all_not_404() -> None:
+    # The UI's "All profiles" scope sends profile: null — it must be treated as all, NOT
+    # stringified to "None" and 404'd as an unknown profile.
+    body = {**_ask(), "profile": None}
+    resp = _client(_chat('{"reply":"ok"}')).post("/agent/chat", json=body, headers=_PIN)
+    assert resp.status_code == 200
+
+
+def test_chat_empty_profile_is_all() -> None:
+    body = {**_ask(), "profile": ""}
+    resp = _client(_chat('{"reply":"ok"}')).post("/agent/chat", json=body, headers=_PIN)
+    assert resp.status_code == 200
+
+
 def test_chat_known_profile_scopes_context() -> None:
     fake = _chat('{"reply":"ok"}')
     body = {**_ask(), "profile": "default"}
@@ -288,6 +302,18 @@ def test_apply_destructive_action_422(tmp_path: Path) -> None:
 def test_apply_unknown_profile_404(tmp_path: Path) -> None:
     client, _ = _with_alice(tmp_path)
     assert _apply(client, "whitelist.add", "nobody", {"entry": "x.com"}).status_code == 404
+
+
+def test_apply_null_profile_resolves_sole_teen(tmp_path: Path) -> None:
+    # profile: null must not become the literal "None"; with a single teen it resolves to them.
+    client, manager = _with_alice(tmp_path)
+    resp = client.post(
+        "/agent/apply",
+        json={"action": "whitelist.add", "profile": None, "params": {"entry": "khanacademy.org"}},
+        headers=_PIN,
+    )
+    assert resp.status_code == 200
+    assert "khanacademy.org" in manager.snapshot()["alice"].whitelist.current().values
 
 
 def test_apply_bad_entry_422(tmp_path: Path) -> None:

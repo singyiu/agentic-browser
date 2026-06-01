@@ -885,7 +885,13 @@ def create_app(
                 {"error": "messages must be a non-empty list ending with a user message"},
                 status_code=422,
             )
-        profile_name = str(body.get("profile", "")).strip() or None
+        # ``profile`` may arrive as a name, "", or JSON null (the "all profiles" scope the UI
+        # sends). Normalize anything non-string — including null — to None; never str(None),
+        # which would become the literal "None" and 404 as an unknown profile.
+        profile_raw = body.get("profile")
+        profile_name = (
+            profile_raw.strip() if isinstance(profile_raw, str) and profile_raw.strip() else None
+        )
         snap = _pm.snapshot()
         if profile_name is not None and profile_name not in snap:
             return JSONResponse({"error": "unknown profile"}, status_code=404)
@@ -2660,7 +2666,9 @@ def create_app(
         params = body.get("params")
         if not isinstance(params, dict):
             return JSONResponse({"error": "params must be an object"}, status_code=422)
-        profile_str = str(body.get("profile", "")).strip()
+        # Normalize null / non-string to "" (→ resolves to the sole teen, or 422). Never str(None).
+        profile_raw = body.get("profile")
+        profile_str = profile_raw.strip() if isinstance(profile_raw, str) else ""
         try:
             result = await dispatch(profile_str, params)
         except _AgentApplyError as exc:
