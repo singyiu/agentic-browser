@@ -323,9 +323,9 @@ def test_home_page_wires_agent_shell() -> None:
     html = _client(_ok_classifier()).get("/").text
     assert 'id="nav-agent"' in html
     assert 'id="sec-agent"' in html
-    assert "/static/agent.js?v=1" in html
+    assert "/static/agent.js?v=2" in html
     assert "/static/shell.js?v=18" in html
-    assert "aegis-shell.css?v=16" in html
+    assert "aegis-shell.css?v=17" in html
 
 
 def test_agent_js_served() -> None:
