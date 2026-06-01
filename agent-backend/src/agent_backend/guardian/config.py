@@ -12,6 +12,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 2947
 DEFAULT_METRICS_PORT = 2948
 DEFAULT_MODEL = "claude-haiku-4-5"  # fast + cheap for per-page classification
+DEFAULT_AGENT_MODEL = "claude-sonnet-4-5"  # guardian Agent chat: deeper reasoning than classify
 DEFAULT_TIMEOUT_S = 180.0  # a classification spawns a `claude` subprocess; give it room
 DEFAULT_SCREENSHOT_THRESHOLD = 0.6
 DEFAULT_AGE = 10  # default child age for age-aware classification (per-profile override)
@@ -78,6 +79,10 @@ class GuardianConfig:
     # kid browser can force-install the extension. Relative paths resolve from the
     # service working directory (agent-backend/), matching the data/ convention.
     ext_dist_dir: str = DEFAULT_EXT_DIST_DIR
+    # Model backing the conversational guardian "Agent" assistant (data analysis, suggestions,
+    # config proposals). Defaults to a stronger model than the per-page classifier (``model``),
+    # which stays on the fast/cheap tier. Override with GUARDIAN_AGENT_MODEL.
+    agent_model: str = DEFAULT_AGENT_MODEL
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> GuardianConfig:
@@ -140,6 +145,7 @@ class GuardianConfig:
             ),
             enable_vision=_clean(e.get("GUARDIAN_ENABLE_VISION")).lower() in ("1", "true", "yes"),
             model=_clean(e.get("GUARDIAN_MODEL")) or DEFAULT_MODEL,
+            agent_model=_clean(e.get("GUARDIAN_AGENT_MODEL")) or DEFAULT_AGENT_MODEL,
             config_dir=config_dir,
             oauth_token=oauth,
         )

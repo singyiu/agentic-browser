@@ -103,9 +103,9 @@ class Classifier:
         self._query = query_fn
         self._lock = asyncio.Lock()
 
-    def _base_options(self, system_prompt: str) -> ClaudeAgentOptions:
+    def _base_options(self, system_prompt: str, *, model: str | None = None) -> ClaudeAgentOptions:
         return ClaudeAgentOptions(
-            model=self._config.model,
+            model=model or self._config.model,
             system_prompt=system_prompt,
             allowed_tools=[],
             disallowed_tools=list(_DISALLOWED),
@@ -161,13 +161,16 @@ class Classifier:
                         collected = message.result
         return collected
 
-    async def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+    async def generate(
+        self, *, system_prompt: str, user_prompt: str, model: str | None = None
+    ) -> str:
         """Run one stateless prose generation (no rubric/policy/topic injection).
 
         Returns the collected text. Unlike ``classify`` this does NOT fail open: transport errors
         propagate so the caller (the suggest-block-rule endpoint) can surface them as a 502.
+        ``model`` overrides the configured classifier model (the Agent chat uses a stronger one).
         """
-        return await self._run(user_prompt, self._base_options(system_prompt))
+        return await self._run(user_prompt, self._base_options(system_prompt, model=model))
 
     async def classify(
         self,

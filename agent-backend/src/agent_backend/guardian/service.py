@@ -19,6 +19,7 @@ from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Re
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
+from .. import __version__ as _BACKEND_VERSION
 from ..config import ConfigError
 from .access_requests import AccessRequest, RequestStore
 from .blocklist import BlocklistStore
@@ -399,6 +400,54 @@ def _valid_prompt_text(text: str) -> bool:
     return all(ch in "\n\t" or ch.isprintable() for ch in text)
 
 
+# --- Stack version assembly (the Agent page + GET /version) -----------------------------------
+# Read the deployed component versions at request time from their source-of-truth files rather
+# than hardcoding them. The repo root is resolved from this file's location; any unreadable
+# source degrades to ``None`` (never a 500). The guardian runs from a checkout, so these paths
+# exist; in an installed-elsewhere layout the corresponding fields are simply ``None``.
+_GUARDIAN_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _GUARDIAN_DIR.parents[3]  # guardian → agent_backend → src → agent-backend → <repo>
+_LGTM_IMAGE_PREFIX = "grafana/otel-lgtm:"
+_ALLOY_IMAGE_PREFIX = "grafana/alloy:"
+
+
+def _read_extension_version() -> str | None:
+    """The kid extension's ``version`` from ``extension/manifest.json`` (None if unreadable)."""
+    try:
+        data = json.loads((_REPO_ROOT / "extension" / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    version = data.get("version")
+    return version if isinstance(version, str) else None
+
+
+def _read_grafana_versions() -> dict[str, str | None]:
+    """The pinned Grafana LGTM + Alloy image tags from ``observability/docker-compose.yml``."""
+    lgtm: str | None = None
+    alloy: str | None = None
+    try:
+        text = (_REPO_ROOT / "observability" / "docker-compose.yml").read_text(encoding="utf-8")
+    except OSError:
+        return {"lgtm": None, "alloy": None}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if _LGTM_IMAGE_PREFIX in line:
+            lgtm = line.split(_LGTM_IMAGE_PREFIX, 1)[1].strip().strip("\"'") or None
+        elif _ALLOY_IMAGE_PREFIX in line:
+            alloy = line.split(_ALLOY_IMAGE_PREFIX, 1)[1].strip().strip("\"'") or None
+    return {"lgtm": lgtm, "alloy": alloy}
+
+
+def _stack_versions(agent_model: str) -> dict[str, Any]:
+    """Assemble the ``{guardian, extension, grafana, model}`` stack-version payload."""
+    return {
+        "guardian": _BACKEND_VERSION,
+        "extension": _read_extension_version(),
+        "grafana": _read_grafana_versions(),
+        "model": agent_model,
+    }
+
+
 def _ms(start: float) -> int:
     return int((time.monotonic() - start) * 1000)
 
@@ -548,6 +597,13 @@ def create_app(
 
     async def health(_request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
+
+    async def version_endpoint(request: Request) -> JSONResponse:
+        """Return the deployed stack versions (parent-only; also fed to the Agent's context)."""
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        return JSONResponse(_stack_versions(config.agent_model))
 
     async def classify(request: Request) -> JSONResponse:
         rt = _resolve_runtime(request)
@@ -2270,6 +2326,7 @@ def create_app(
         routes=[
             Route("/", home_page, methods=["GET"]),
             Route("/health", health),
+            Route("/version", version_endpoint, methods=["GET"]),
             Route("/classify", classify, methods=["POST"]),
             Route("/search-classify", search_classify, methods=["POST"]),
             Route("/dwell", dwell, methods=["POST"]),
