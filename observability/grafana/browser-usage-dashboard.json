@@ -128,12 +128,14 @@
       "id": 11,
       "type": "timeseries",
       "title": "Screen time per day by profile",
+      "description": "Screen time per day, one line per profile. Each point is a non-overlapping daily bucket (increase over $__interval, min step 1d), so the legend Total = the real screen time summed across the visible days — not overlapping rolling-24h windows.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 9, "w": 24, "x": 0, "y": 36 },
       "maxDataPoints": 5000,
+      "interval": "1d",
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "pointSize": 6, "showPoints": "always", "lineInterpolation": "smooth", "spanNulls": true } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (profile) (increase(guardian_dwell_seconds_total{profile!=\"\"}[1d]))", "legendFormat": "{{profile}}" }]
+      "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (profile) (increase(guardian_dwell_seconds_total{profile!=\"\"}[$__interval]))", "legendFormat": "{{profile}}" }]
     },
     {
       "id": 12,

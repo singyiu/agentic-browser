@@ -42,7 +42,11 @@ The guardian dashboard (`:2947`) embeds two panels from this stack so a parent n
 it. They are driven by the per-profile dwell metric `guardian_dwell_seconds_total{host, profile}`:
 
 - **Panel 11 — "Screen time per day by profile"** (`timeseries`): `sum by (profile)
-  (increase(guardian_dwell_seconds_total[1d]))`. Embedded on the dashboard's *Screen time* card.
+  (increase(guardian_dwell_seconds_total{profile!=""}[$__interval]))` with a **1d min step**
+  (`"interval": "1d"`). Using `$__interval` (not a fixed `[1d]`) makes each point a *non-overlapping*
+  daily bucket, so the legend **Total** (`sum` calc) equals the real screen time across the visible
+  days. A fixed `[1d]` window evaluated at every ~4-min step double-counts (overlapping rolling-24h
+  windows), inflating the Total. Embedded on the dashboard's *Screen time* card.
 - **Panel 12 — "Website time (selected range)"** (`table`): `topk(20, sum by (host)
   (increase(guardian_dwell_seconds_total{profile=~"$profile"}[$__range])))`. Embedded in the
   Activity *Screen time* tab, with the in-app selectors setting `var-profile` and a 48h `from`/`to`.
