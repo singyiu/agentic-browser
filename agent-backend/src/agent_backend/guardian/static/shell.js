@@ -98,6 +98,7 @@
   // Per-section data loaders. Filled in by later steps; the shell + routing work
   // regardless, so an unimplemented section simply shows its static markup.
   const SECTIONS = [
+    "agent",
     "dashboard",
     "profiles",
     "requests",
@@ -1874,13 +1875,14 @@
     } else if (key === "whitelist") loadLists();
     else if (key === "time" && Aegis.loadTime) Aegis.loadTime();
     else if (key === "prize") loadPrize();
+    else if (key === "agent" && window.AegisAgent) window.AegisAgent.load();
     // "settings" is a static form — nothing to fetch.
   }
 
   /* ---------- Hash router ---------- */
   function currentKey() {
     const raw = (location.hash || "").replace(/^#\/?/, "").split("?")[0];
-    return SECTIONS.includes(raw) ? raw : "dashboard";
+    return SECTIONS.includes(raw) ? raw : "agent";
   }
 
   function route() {
@@ -2012,7 +2014,7 @@
     $("pin-gate").hidden = true;
     $("app-shell").hidden = false;
     if (!location.hash)
-      location.hash = "#/dashboard"; // fires hashchange → route()
+      location.hash = "#/agent"; // fires hashchange → route() (Agent is the default landing)
     else route(); // honour an existing hash (e.g. /review redirected to /#/requests)
   }
 

@@ -314,3 +314,27 @@ def test_apply_requires_pin(tmp_path: Path) -> None:
         json={"action": "whitelist.add", "profile": "alice", "params": {"entry": "x.com"}},
     )
     assert resp.status_code == 403
+
+
+# --- frontend wiring (served shell makes Agent first + the default landing) -------------------
+
+
+def test_home_page_wires_agent_shell() -> None:
+    html = _client(_ok_classifier()).get("/").text
+    assert 'id="nav-agent"' in html
+    assert 'id="sec-agent"' in html
+    assert "/static/agent.js?v=1" in html
+    assert "/static/shell.js?v=18" in html
+    assert "aegis-shell.css?v=16" in html
+
+
+def test_agent_js_served() -> None:
+    resp = _client(_ok_classifier()).get("/static/agent.js")
+    assert resp.status_code == 200
+    assert "AegisAgent" in resp.text
+
+
+def test_shell_js_default_landing_is_agent() -> None:
+    js = _client(_ok_classifier()).get("/static/shell.js").text
+    assert 'location.hash = "#/agent"' in js  # post-unlock default
+    assert '"agent",' in js  # first entry of SECTIONS
