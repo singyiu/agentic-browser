@@ -4,13 +4,20 @@
 
 import { getConfig } from "./guardian-client.js";
 import {
+  ensureTiming,
   flushPartial,
   handleActivated,
   handleFocusChanged,
   handleIdleState,
   handleRemoved,
   notifyUrlKey,
+  pauseTiming,
 } from "./dwell-tracker.js";
+
+// How long without user input (keyboard/mouse) counts as "idle". The heartbeat stops banking
+// screen time while idle, and chrome.idle transitions fire at this threshold. ~1 min of grace so
+// brief reading pauses still count, but a tab left unattended no longer drains the budget.
+const IDLE_THRESHOLD_SECONDS = 60;
 
 const HARD_ALLOW = [
   /^chrome:/,
@@ -257,11 +264,35 @@ function updateActionBadge(state) {
   chrome.action.setTitle({ title: `${remMin} min of screen time left today` });
 }
 
+// Current input-idle state ("active" | "idle" | "locked"). Falls back to "active" if the idle API
+// is unavailable, so budget enforcement never silently stops counting.
+function idleStateSafe() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.idle || !chrome.idle.queryState) return resolve("active");
+      chrome.idle.queryState(IDLE_THRESHOLD_SECONDS, (state) =>
+        resolve(chrome.runtime.lastError ? "active" : state || "active"),
+      );
+    } catch (_e) {
+      resolve("active");
+    }
+  });
+}
+
 // Periodic (30s alarm) heartbeat: bank the in-progress dwell so the budget is current, then
 // re-check the active tab — block it the moment the budget is spent (mid-session, not only on
 // the next navigation) and refresh the toolbar badge.
 async function timeHeartbeat() {
-  await flushPartial();
+  // Count active browsing only. Query the live idle state every tick instead of trusting the
+  // best-effort idle->idle transition event (MV3 may have torn the worker down when it fired):
+  // if idle/locked, stop the clock and bank nothing; if active, bank the interval and make sure
+  // the clock is running again in case an earlier idle stretch had paused it.
+  if ((await idleStateSafe()) === "active") {
+    await flushPartial();
+    await ensureTiming();
+  } else {
+    await pauseTiming();
+  }
   const tab = await activeFocusedTab();
   if (!tab || !tab.id || shouldSkip(tab.url)) return;
   const state = await timeState(tab.url);
@@ -412,6 +443,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // Guarded: if the "idle" permission isn't present, never let it crash the worker on startup —
 // time enforcement still works via navigation checks + the 30s heartbeat, just without idle pausing.
 if (chrome.idle && chrome.idle.onStateChanged) {
-  chrome.idle.setDetectionInterval(60);
+  chrome.idle.setDetectionInterval(IDLE_THRESHOLD_SECONDS);
   chrome.idle.onStateChanged.addListener(handleIdleState);
 }

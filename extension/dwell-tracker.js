@@ -122,21 +122,37 @@ export async function flushPartial() {
   }
 }
 
-// Pause the clock when the user goes idle or locks the screen, and resume on activity. This is
-// what makes accounting count ACTIVE browsing only: a tab left focused while the user is away
-// no longer burns the budget. Driven by chrome.idle.onStateChanged in the service worker.
-export async function handleIdleState(state) {
-  if (state === "active") {
-    try {
-      const [tab] = await chrome.tabs.query({
-        active: true,
-        lastFocusedWindow: true,
-      });
-      if (tab) await startTiming(tab.id);
-    } catch (_e) {
-      // ignore
+// Stop the dwell clock WITHOUT banking the in-progress segment. Used when we detect the user is
+// idle/locked: that segment had no user input, so it is idle time and must NOT count against the
+// budget. Discarding (vs. flushing) is what stops a focused-but-idle tab from draining the budget.
+export async function pauseTiming() {
+  await clearCurrent();
+}
+
+// Ensure the dwell clock is running for the active, focused tab. The heartbeat calls this to
+// resume timing after an idle stretch even if the idle->active transition event never arrived
+// (MV3 tears the service worker down between alarms, so those transition events are best-effort).
+export async function ensureTiming() {
+  if (await getCurrent()) return; // already timing this tab
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (tab && tab.id != null && (await isActiveFocused(tab.id))) {
+      await startTiming(tab.id);
     }
-  } else {
-    await flush(); // idle / locked -> bank the time up to now and stop the clock
+  } catch (_e) {
+    // ignore
   }
+}
+
+// Pause the clock when the user goes idle or locks the screen, and resume on activity. This makes
+// accounting count ACTIVE browsing only: a tab left focused while the user is away no longer burns
+// the budget. Driven by chrome.idle.onStateChanged (fast path) AND re-verified every 30s by the
+// heartbeat's chrome.idle.queryState check (robust path), since transition events are best-effort
+// under MV3 service-worker teardown.
+export async function handleIdleState(state) {
+  if (state === "active") await ensureTiming();
+  else await pauseTiming(); // idle / locked -> stop the clock, bank nothing
 }
