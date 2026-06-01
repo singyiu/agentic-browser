@@ -10,13 +10,14 @@ import json
 from pathlib import Path
 
 import pytest
+from starlette.testclient import TestClient
 
 from agent_backend import __version__ as BACKEND_VERSION
 from agent_backend.guardian import service
 from agent_backend.guardian.config import DEFAULT_AGENT_MODEL
 from agent_backend.guardian.verdict import Verdict
 
-from .test_service import _PIN, FakeClassifier, _client
+from .test_service import _PIN, FakeClassifier, _client, _pm_client
 
 
 def _ok_classifier() -> FakeClassifier:
@@ -195,3 +196,121 @@ def test_chat_llm_error_502() -> None:
     fake = FakeClassifier(Verdict("allow"), rule_result=RuntimeError("boom"))
     resp = _client(fake).post("/agent/chat", json=_ask(), headers=_PIN)
     assert resp.status_code == 502
+
+
+# --- POST /agent/apply -----------------------------------------------------------------------
+
+
+def _with_alice(tmp_path: Path, *, classifier: object | None = None) -> tuple[TestClient, object]:
+    """A real-store client with one teen profile 'alice' created."""
+    client, manager = _pm_client(tmp_path, classifier=classifier)
+    assert client.post("/profiles", json={"name": "alice"}, headers=_PIN).status_code == 201
+    return client, manager
+
+
+def _apply(client: TestClient, action: str, profile: str, params: dict) -> object:
+    return client.post(
+        "/agent/apply",
+        json={"action": action, "profile": profile, "params": params},
+        headers=_PIN,
+    )
+
+
+def test_apply_whitelist_add(tmp_path: Path) -> None:
+    client, manager = _with_alice(tmp_path)
+    resp = _apply(client, "whitelist.add", "alice", {"entry": "khanacademy.org"})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert "khanacademy.org" in manager.snapshot()["alice"].whitelist.current().values
+
+
+def test_apply_blocklist_add_then_remove(tmp_path: Path) -> None:
+    client, manager = _with_alice(tmp_path)
+    _apply(client, "blocklist.add", "alice", {"entry": "tiktok.com"})
+    assert "tiktok.com" in manager.snapshot()["alice"].blocklist.current().values
+    _apply(client, "blocklist.remove", "alice", {"entry": "tiktok.com"})
+    assert "tiktok.com" not in manager.snapshot()["alice"].blocklist.current().values
+
+
+def test_apply_search_block_keyword_add(tmp_path: Path) -> None:
+    client, manager = _with_alice(tmp_path)
+    assert _apply(client, "search_block.add", "alice", {"entry": "violence"}).status_code == 200
+    assert "violence" in manager.snapshot()["alice"].search_block.current().values
+
+
+def test_apply_prize_grant(tmp_path: Path) -> None:
+    client, manager = _with_alice(tmp_path)
+    resp = _apply(client, "prize.grant", "alice", {"points": 50, "reason": "great week"})
+    assert resp.status_code == 200
+    assert resp.json()["result"]["balance"] == 50
+    assert manager.snapshot()["alice"].prize_point_store.balance() == 50
+
+
+def test_apply_prize_grant_invalid_points(tmp_path: Path) -> None:
+    client, _ = _with_alice(tmp_path)
+    assert _apply(client, "prize.grant", "alice", {"points": 0}).status_code == 422
+    assert _apply(client, "prize.grant", "alice", {"points": 10_000_000}).status_code == 422
+
+
+def test_apply_prize_grant_requires_named_child(tmp_path: Path) -> None:
+    client, _ = _with_alice(tmp_path)
+    # Global is never a prize target.
+    assert _apply(client, "prize.grant", "global", {"points": 10}).status_code == 404
+
+
+def test_apply_prompt_set(tmp_path: Path) -> None:
+    client, manager = _with_alice(tmp_path)
+    resp = _apply(client, "prompt.set", "alice", {"prompt": "Block gambling content."})
+    assert resp.status_code == 200
+    assert manager.snapshot()["alice"].prompt_store.current() == "Block gambling content."
+
+
+def test_apply_time_policy_set(tmp_path: Path) -> None:
+    # The dispatcher runs the NL→JSON conversion through the classifier; feed it valid policy JSON.
+    fake = FakeClassifier(Verdict("allow"), rule_result='{"daily_minutes": {"default": 120}}')
+    client, manager = _with_alice(tmp_path, classifier=fake)
+    resp = _apply(client, "time_policy.set", "alice", {"text": "2 hours a day"})
+    assert resp.status_code == 200
+    assert manager.snapshot()["alice"].time_policy.current().daily_minutes.get("default") == 120
+
+
+def test_apply_unknown_action_422(tmp_path: Path) -> None:
+    client, _ = _with_alice(tmp_path)
+    assert _apply(client, "delete_profile", "alice", {}).status_code == 422
+
+
+def test_apply_destructive_action_422(tmp_path: Path) -> None:
+    client, _ = _with_alice(tmp_path)
+    # PIN change / profile deletion / token regen are deliberately NOT in the registry.
+    assert _apply(client, "pin.change", "alice", {"pin": "9999"}).status_code == 422
+
+
+def test_apply_unknown_profile_404(tmp_path: Path) -> None:
+    client, _ = _with_alice(tmp_path)
+    assert _apply(client, "whitelist.add", "nobody", {"entry": "x.com"}).status_code == 404
+
+
+def test_apply_bad_entry_422(tmp_path: Path) -> None:
+    client, _ = _with_alice(tmp_path)
+    assert _apply(client, "whitelist.add", "alice", {"entry": ""}).status_code == 422
+    assert _apply(client, "whitelist.add", "alice", {"entry": "a\nb"}).status_code == 422
+    assert _apply(client, "whitelist.add", "alice", {"entry": "x" * 513}).status_code == 422
+
+
+def test_apply_params_not_object_422(tmp_path: Path) -> None:
+    client, _ = _with_alice(tmp_path)
+    resp = client.post(
+        "/agent/apply",
+        json={"action": "whitelist.add", "profile": "alice", "params": "nope"},
+        headers=_PIN,
+    )
+    assert resp.status_code == 422
+
+
+def test_apply_requires_pin(tmp_path: Path) -> None:
+    client, _ = _with_alice(tmp_path)
+    resp = client.post(
+        "/agent/apply",
+        json={"action": "whitelist.add", "profile": "alice", "params": {"entry": "x.com"}},
+    )
+    assert resp.status_code == 403

@@ -9,6 +9,7 @@ import json
 import re
 import time
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -487,6 +488,16 @@ _AGENT_LIST_CAP = 50  # config-list entries shown per profile
 _AGENT_ACTIVITY_LIMIT = 150  # events pulled for the data slice
 _AGENT_ACTIVITY_MAX_LINES = 80  # rendered activity lines
 
+
+class _AgentApplyError(Exception):
+    """A controlled failure while applying an agent-proposed change → an HTTP status + message."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
 _AGENT_SYSTEM_HEADER = (
     "You are the Aegis Guardian assistant — the AI agent inside a parental-control browser "
     "system. A parent ('guardian') is talking to you in their dashboard. Their child uses a "
@@ -511,8 +522,8 @@ _AGENT_SYSTEM_HEADER = (
     "- prize.grant {points, reason}: award (negative deducts) prize points to a child\n"
     "- prompt.set {prompt}: replace a profile's custom classification prompt\n"
     "'profile' is one of the profile names listed below, or 'global' for the shared rules that "
-    "apply to every child (prize.grant and prompt.set need a specific child, never global). Keep "
-    "'reply' concise and warm. Use empty lists when there is nothing to propose or suggest."
+    "apply to every child (prize.grant must name a specific child, never global). Keep 'reply' "
+    "concise and warm. Use empty lists when there is nothing to propose or suggest."
 )
 
 
@@ -2497,6 +2508,166 @@ def create_app(
         )
         return JSONResponse({"ok": True, "age": None if is_global else rt.age})
 
+    # --- Agent apply: parent-approved config writes (POST /agent/apply) ---
+    # Each action the agent may PROPOSE has a dispatcher here that RE-VALIDATES its params with the
+    # same rules as the corresponding typed endpoint and writes through the same store method — so a
+    # hallucinated or tampered proposal can never bypass validation or reach a destructive op.
+    def _resolve_apply_profile(profile_str: str, *, teen_only: bool = False) -> ProfileRuntime:
+        """Resolve the profile an apply targets, raising ``_AgentApplyError`` on failure.
+
+        ``teen_only`` (prize grants) requires a named child and never resolves Global; otherwise
+        ``"global"`` / a teen name / the sole teen (empty) are accepted, mirroring the typed
+        parent endpoints.
+        """
+        if teen_only:
+            owner = _pm.snapshot().get(profile_str)
+            if owner is None:
+                raise _AgentApplyError(
+                    404 if profile_str else 422,
+                    "unknown profile" if profile_str else "a specific child profile is required",
+                )
+            return owner
+        rt = _resolve_parent_profile(profile_str)
+        if rt is None:
+            raise _AgentApplyError(
+                404 if profile_str else 422,
+                "unknown profile" if profile_str else "profile required",
+            )
+        return rt
+
+    def _make_list_apply(
+        store_attr: str, verb: str, kind: str
+    ) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
+        """Build an add/remove dispatcher for a per-profile entry list (whitelist/keywords/etc.)."""
+
+        async def _dispatch(profile_str: str, params: dict[str, Any]) -> dict[str, Any]:
+            entry = str(params.get("entry", "")).strip()
+            if not entry or len(entry) > 512 or not entry.isprintable():
+                raise _AgentApplyError(
+                    422, "entry must be a non-empty, single-line string (max 512 chars)"
+                )
+            rt = _resolve_apply_profile(profile_str)
+            store = getattr(rt, store_attr)
+            loop = asyncio.get_running_loop()
+            try:
+                await loop.run_in_executor(
+                    None, store.add if verb == "add" else store.remove, entry
+                )
+                await _clear_caches_after_list_change(rt)
+            except OSError as exc:
+                raise _AgentApplyError(500, f"{kind} write failed") from exc
+            event_log.log(f"agent_{kind}_{verb}", entry=entry, profile=rt.name)
+            return {"profile": rt.name, "entry": entry}
+
+        return _dispatch
+
+    async def _apply_prize_grant(profile_str: str, params: dict[str, Any]) -> dict[str, Any]:
+        points = _clamp_prize_points(params.get("points"))
+        if points is None:
+            raise _AgentApplyError(
+                422, f"points must be a non-zero integer within +-{_MAX_PRIZE_POINTS}"
+            )
+        owner = _resolve_apply_profile(profile_str, teen_only=True)
+        raw_reason = params.get("reason")
+        reason = raw_reason.strip()[:200] if isinstance(raw_reason, str) else ""
+        loop = asyncio.get_running_loop()
+        try:
+            balance = await loop.run_in_executor(None, owner.prize_point_store.add, points)
+        except OSError as exc:
+            raise _AgentApplyError(500, "prize write failed") from exc
+        event_log.log(
+            "prize_points_earned",
+            profile=owner.name,
+            delta=points,
+            reason=reason,
+            balance_after=balance,
+        )
+        metrics.record_prize_grant(owner.name, points, balance)
+        return {"profile": owner.name, "points": points, "balance": balance}
+
+    async def _apply_prompt_set(profile_str: str, params: dict[str, Any]) -> dict[str, Any]:
+        prompt = str(params.get("prompt", ""))
+        if not _valid_prompt_text(prompt):
+            raise _AgentApplyError(
+                422, f"prompt must be printable text up to {_MAX_PROMPT_CHARS} chars"
+            )
+        rt = _resolve_apply_profile(profile_str)
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, rt.prompt_store.set, prompt)
+            await _clear_caches_after_list_change(rt)
+        except OSError as exc:
+            raise _AgentApplyError(500, "prompt write failed") from exc
+        event_log.log("agent_prompt_set", profile=rt.name, length=len(prompt))
+        return {"profile": rt.name, "length": len(prompt)}
+
+    async def _apply_time_policy_set(profile_str: str, params: dict[str, Any]) -> dict[str, Any]:
+        text = str(params.get("text", "")).strip()
+        if not text or len(text) > _MAX_TIME_TEXT:
+            raise _AgentApplyError(422, f"text required (max {_MAX_TIME_TEXT} chars)")
+        rt = _resolve_apply_profile(profile_str)
+        # Convert the parent's natural-language limits into the structured policy with the same
+        # prompt the /time/policy/parse preview uses, then save it (validated + clamped on parse).
+        try:
+            raw = await asyncio.wait_for(
+                classifier.generate(system_prompt=_TIME_POLICY_SYSTEM_PROMPT, user_prompt=text),
+                timeout=config.classify_timeout_s,
+            )
+        except Exception as exc:  # noqa: BLE001 - NL→policy conversion failed
+            raise _AgentApplyError(502, "time policy parse failed") from exc
+        policy = parse_time_policy(raw, source_text=text, updated_ts=datetime.now(UTC).isoformat())
+        loop = asyncio.get_running_loop()
+        try:
+            saved = await loop.run_in_executor(None, rt.time_policy.set, policy)
+        except OSError as exc:
+            raise _AgentApplyError(500, "policy write failed") from exc
+        event_log.log("time_policy_set", profile=rt.name)
+        return {"profile": rt.name, "policy": time_policy_to_json(saved)}
+
+    _apply_registry: dict[str, Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]] = {
+        "whitelist.add": _make_list_apply("whitelist", "add", "whitelist"),
+        "whitelist.remove": _make_list_apply("whitelist", "remove", "whitelist"),
+        "blocklist.add": _make_list_apply("blocklist", "add", "blocklist"),
+        "blocklist.remove": _make_list_apply("blocklist", "remove", "blocklist"),
+        "search_allow.add": _make_list_apply("search_allow", "add", "search_allow"),
+        "search_allow.remove": _make_list_apply("search_allow", "remove", "search_allow"),
+        "search_block.add": _make_list_apply("search_block", "add", "search_block"),
+        "search_block.remove": _make_list_apply("search_block", "remove", "search_block"),
+        "time_policy.set": _apply_time_policy_set,
+        "prize.grant": _apply_prize_grant,
+        "prompt.set": _apply_prompt_set,
+    }
+    if set(_apply_registry) != _AGENT_APPLY_ACTIONS:  # keep the write surface defined in one place
+        raise RuntimeError("agent apply registry out of sync with _AGENT_APPLY_ACTIONS")
+
+    async def agent_apply(request: Request) -> JSONResponse:
+        """Apply ONE parent-approved config change the agent proposed (PIN-gated, one per call).
+
+        The action must be in the allow-listed registry (destructive ops are absent by design);
+        the matching dispatcher re-validates params server-side before any write.
+        """
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        action = str(body.get("action", "")).strip()
+        dispatch = _apply_registry.get(action)
+        if dispatch is None:
+            return JSONResponse({"error": "unknown or unsupported action"}, status_code=422)
+        params = body.get("params")
+        if not isinstance(params, dict):
+            return JSONResponse({"error": "params must be an object"}, status_code=422)
+        profile_str = str(body.get("profile", "")).strip()
+        try:
+            result = await dispatch(profile_str, params)
+        except _AgentApplyError as exc:
+            return JSONResponse({"error": exc.message}, status_code=exc.status)
+        event_log.log("agent_apply", action=action, profile=str(result.get("profile", "")))
+        return JSONResponse({"ok": True, "action": action, "result": result})
+
     async def settings_change_pin(request: Request) -> JSONResponse:
         # Rotate the parent PIN. Re-authenticate with the *current* PIN from the body (not the
         # header) so an unlocked-but-unattended tab can't silently change the credential. We
@@ -2638,6 +2809,8 @@ def create_app(
             # Flagship "Agent" assistant: PIN-gated conversational chat (read-only; proposes
             # config changes the parent applies) — the dashboard's default landing page.
             Route("/agent/chat", agent_chat, methods=["POST"]),
+            # Apply a single parent-approved config change the agent proposed (re-validated).
+            Route("/agent/apply", agent_apply, methods=["POST"]),
             Route("/classify", classify, methods=["POST"]),
             Route("/search-classify", search_classify, methods=["POST"]),
             Route("/dwell", dwell, methods=["POST"]),
