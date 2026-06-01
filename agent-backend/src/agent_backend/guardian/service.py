@@ -8,6 +8,7 @@ import hmac
 import json
 import re
 import time
+from collections import Counter
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -448,6 +449,254 @@ def _stack_versions(agent_model: str) -> dict[str, Any]:
     }
 
 
+# --- Agent chat: context assembly + structured-envelope parsing (POST /agent/chat) ------------
+# The flagship guardian "Agent" page. Each turn assembles bounded server-side context (software
+# digest, per-profile config snapshot, a recent-activity slice, stack versions) and makes ONE
+# stateless ``Classifier.generate()`` call. The model replies with a JSON envelope: a markdown
+# reply plus optional config-change proposals (the parent applies them via /agent/apply — the
+# model never writes) and follow-up suggestions. Parsing is fail-safe (mirrors
+# ``_parse_activity_summary``): any malformed output degrades to a plain reply, never a 500.
+
+# The agent's entire write surface — the action keys it may PROPOSE and the parent may APPLY.
+# Destructive operations (PIN change, profile delete/rename, token regeneration) are deliberately
+# absent: an LLM must never be able to even suggest them through this channel.
+_AGENT_APPLY_ACTIONS: frozenset[str] = frozenset(
+    {
+        "whitelist.add",
+        "whitelist.remove",
+        "blocklist.add",
+        "blocklist.remove",
+        "search_allow.add",
+        "search_allow.remove",
+        "search_block.add",
+        "search_block.remove",
+        "time_policy.set",
+        "prize.grant",
+        "prompt.set",
+    }
+)
+
+_AGENT_HISTORY_MAX = 20  # conversation turns kept (server-enforced cap on token cost)
+_AGENT_MSG_MAX_CHARS = 4000  # per-message clamp
+_AGENT_REPLY_MAX = 8000  # reply clamp
+_AGENT_MAX_PROPOSALS = 5
+_AGENT_MAX_SUGGESTIONS = 6
+_AGENT_RATIONALE_MAX = 300
+_AGENT_SUGGESTION_MAX = 80
+_AGENT_LIST_CAP = 50  # config-list entries shown per profile
+_AGENT_ACTIVITY_LIMIT = 150  # events pulled for the data slice
+_AGENT_ACTIVITY_MAX_LINES = 80  # rendered activity lines
+
+_AGENT_SYSTEM_HEADER = (
+    "You are the Aegis Guardian assistant — the AI agent inside a parental-control browser "
+    "system. A parent ('guardian') is talking to you in their dashboard. Their child uses a "
+    "locked Chromium browser whose extension classifies and blocks pages through this guardian "
+    "backend. Per-profile rules control allowed/blocked sites, allowed/blocked search keywords, "
+    "daily screen-time budgets and bedtime, prize points (kids redeem them for bonus screen "
+    "time), and a custom classification prompt.\n\n"
+    "You can: answer questions about how the system works; analyze the configuration and recent "
+    "activity shown below; and PROPOSE configuration changes for the parent to approve. You never "
+    "change anything yourself — you propose, and the parent applies.\n\n"
+    "Respond with ONLY a single JSON object (no prose outside it, no code fences):\n"
+    '{"reply": "<markdown answer for the parent>", '
+    '"proposals": [{"action": "<key>", "profile": "<profile name or null>", '
+    '"params": {...}, "rationale": "<one sentence>"}], '
+    '"suggestions": ["<short follow-up the parent might tap>"]}\n\n'
+    "Propose an action ONLY when the parent clearly wants a change. Allowed actions and params:\n"
+    "- whitelist.add / whitelist.remove {entry}: allow / un-allow a site or topic\n"
+    "- blocklist.add / blocklist.remove {entry}: block / unblock a site or topic\n"
+    "- search_allow.add / search_allow.remove {entry}: allow / un-allow a search keyword\n"
+    "- search_block.add / search_block.remove {entry}: block / unblock a search keyword\n"
+    "- time_policy.set {text}: set screen-time rules from a natural-language description\n"
+    "- prize.grant {points, reason}: award (negative deducts) prize points to a child\n"
+    "- prompt.set {prompt}: replace a profile's custom classification prompt\n"
+    "'profile' is one of the profile names listed below, or 'global' for the shared rules that "
+    "apply to every child (prize.grant and prompt.set need a specific child, never global). Keep "
+    "'reply' concise and warm. Use empty lists when there is nothing to propose or suggest."
+)
+
+
+def _coerce_chat_messages(value: object) -> list[dict[str, str]]:
+    """Validate conversation history → clean ``{role, content}`` list, bounded to the last N.
+
+    Non-list input, non-dict entries, unknown roles, and non-string/blank content are dropped;
+    each message is clamped and only the most recent ``_AGENT_HISTORY_MAX`` are kept (a
+    server-enforced cap so a long client history can't blow up the prompt).
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "")).strip()
+        if role not in ("user", "assistant"):
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        text = content.strip()[:_AGENT_MSG_MAX_CHARS]
+        if text:
+            out.append({"role": role, "content": text})
+    return out[-_AGENT_HISTORY_MAX:]
+
+
+def _render_conversation(messages: list[dict[str, str]]) -> str:
+    """Render the bounded history as a labeled transcript for the user prompt."""
+    labels = {"user": "Guardian", "assistant": "Assistant"}
+    return "\n\n".join(f"{labels[m['role']]}: {m['content']}" for m in messages)
+
+
+def _parse_agent_proposals(value: object) -> list[dict[str, Any]]:
+    """Coerce model proposals → bounded list of valid, known-action entries (unknown dropped)."""
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action", "")).strip()
+        if action not in _AGENT_APPLY_ACTIONS:  # unknown / destructive → dropped
+            continue
+        params = item.get("params")
+        profile_val = item.get("profile")
+        out.append(
+            {
+                "action": action,
+                "profile": (
+                    profile_val.strip()
+                    if isinstance(profile_val, str) and profile_val.strip()
+                    else None
+                ),
+                "params": params if isinstance(params, dict) else {},
+                "rationale": str(item.get("rationale", "")).strip()[:_AGENT_RATIONALE_MAX],
+            }
+        )
+        if len(out) >= _AGENT_MAX_PROPOSALS:
+            break
+    return out
+
+
+def _parse_agent_response(raw: str) -> dict[str, Any]:
+    """Best-effort extraction of ``{reply, proposals[], suggestions[]}`` (never raises).
+
+    Mirrors ``_parse_activity_summary``: any non-JSON / malformed output degrades to a plain
+    ``reply`` carrying the whole text, so a confused model can't 500 the endpoint.
+    """
+    fallback = raw.strip()[:_AGENT_REPLY_MAX] if raw else ""
+    empty: dict[str, Any] = {"reply": fallback, "proposals": [], "suggestions": []}
+    if not raw:
+        return empty
+    text = raw.strip()
+    candidates = [text]
+    match = _SUMMARY_OBJECT_RE.search(text)
+    if match is not None:
+        candidates.append(match.group(0))
+    data: object = None
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict):
+            break
+    if not isinstance(data, dict):
+        return empty
+    reply = str(data.get("reply", "")).strip()[:_AGENT_REPLY_MAX] or fallback
+    return {
+        "reply": reply,
+        "proposals": _parse_agent_proposals(data.get("proposals")),
+        "suggestions": _clean_str_list(
+            data.get("suggestions"),
+            max_len=_AGENT_SUGGESTION_MAX,
+            max_items=_AGENT_MAX_SUGGESTIONS,
+        ),
+    }
+
+
+def _agent_list_preview(values: object, *, cap: int = _AGENT_LIST_CAP) -> str:
+    """Comma-join a config list for the prompt, capped with a '[+N more]' suffix."""
+    vals = [str(v) for v in values] if isinstance(values, (list, tuple)) else []
+    if not vals:
+        return "(none)"
+    suffix = f" [+{len(vals) - cap} more]" if len(vals) > cap else ""
+    return ", ".join(vals[:cap]) + suffix
+
+
+def _agent_time_policy_line(rt: ProfileRuntime) -> str:
+    """A one-line, human-readable summary of a profile's screen-time policy."""
+    policy = rt.time_policy.current()
+    if not policy.is_set():
+        return "(no screen-time limits set)"
+    if policy.source_text.strip():
+        return policy.source_text.strip()[:300]
+    default = policy.daily_minutes.get("default")
+    return f"daily budget {default} min" if default is not None else "(custom limits set)"
+
+
+def _agent_config_snapshot(runtimes: list[ProfileRuntime]) -> str:
+    """Render the per-profile configuration snapshot injected into the system prompt."""
+    blocks: list[str] = []
+    for rt in runtimes:
+        prompt_text = rt.prompt_store.current().strip()
+        prompt_line = (
+            (prompt_text[:200] + "…" if len(prompt_text) > 200 else prompt_text)
+            if prompt_text
+            else "(age-band default)"
+        )
+        blocks.append(
+            f"Profile: {rt.name} (age {rt.age})\n"
+            f"  Allowed sites (whitelist): {_agent_list_preview(rt.whitelist.current().values)}\n"
+            f"  Blocked sites (blocklist): {_agent_list_preview(rt.blocklist.current().values)}\n"
+            f"  Allowed search keywords: {_agent_list_preview(rt.search_allow.current().values)}\n"
+            f"  Blocked search keywords: {_agent_list_preview(rt.search_block.current().values)}\n"
+            f"  Screen-time policy: {_agent_time_policy_line(rt)}\n"
+            f"  Prize balance: {rt.prize_point_store.balance()} points\n"
+            f"  Custom classification prompt: {prompt_line}"
+        )
+    return "\n\n".join(blocks)
+
+
+def _agent_activity_overview(events: list[dict[str, Any]]) -> str:
+    """Compact verdict tally + top hosts across the activity slice."""
+    verdicts: Counter[str] = Counter()
+    hosts: Counter[str] = Counter()
+    for ev in events:
+        verdicts[str(ev.get("event") or "?")] += 1
+        url = str(ev.get("url") or ev.get("url_key") or "")
+        host = extract_host(url) if url else ""
+        if host:
+            hosts[host] += 1
+    vparts = ", ".join(f"{k}={n}" for k, n in verdicts.most_common())
+    hparts = ", ".join(f"{h}({n})" for h, n in hosts.most_common(10))
+    return f"Verdict totals: {vparts or '(none)'}\nTop hosts: {hparts or '(none)'}"
+
+
+def _agent_activity_text(events: list[dict[str, Any]], ages: dict[str, int]) -> str:
+    """The activity section: a verdict/host overview plus the per-profile event digest."""
+    if not events:
+        return "(no recent activity)"
+    overview = _agent_activity_overview(events)
+    digest = _activity_digest(events, ages, max_lines=_AGENT_ACTIVITY_MAX_LINES)
+    return f"{overview}\n\n{digest}"
+
+
+def _build_agent_system_prompt(
+    runtimes: list[ProfileRuntime], activity_text: str, versions: dict[str, Any]
+) -> str:
+    """Assemble the full system prompt: static header + stack + config snapshot + activity."""
+    version_line = (
+        f"Guardian v{versions.get('guardian')} | Extension v{versions.get('extension')} | "
+        f"Model: {versions.get('model')}"
+    )
+    return (
+        f"{_AGENT_SYSTEM_HEADER}\n\n"
+        f"=== STACK ===\n{version_line}\n\n"
+        f"=== CURRENT CONFIGURATION ===\n{_agent_config_snapshot(runtimes)}\n\n"
+        f"=== RECENT ACTIVITY ===\n{activity_text}"
+    )
+
+
 def _ms(start: float) -> int:
     return int((time.monotonic() - start) * 1000)
 
@@ -604,6 +853,65 @@ def create_app(
         if guard is not None:
             return guard
         return JSONResponse(_stack_versions(config.agent_model))
+
+    async def agent_chat(request: Request) -> JSONResponse:
+        """Conversational guardian assistant: assemble context, ask the model, return the envelope.
+
+        Read-only over all stores — the model proposes config changes (applied via /agent/apply),
+        never writes here. PIN-gated; parsing is fail-safe; the conversation is stateless
+        server-side (the client re-sends the bounded history each turn).
+        """
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        messages = _coerce_chat_messages(body.get("messages"))
+        if not messages or messages[-1]["role"] != "user":
+            return JSONResponse(
+                {"error": "messages must be a non-empty list ending with a user message"},
+                status_code=422,
+            )
+        profile_name = str(body.get("profile", "")).strip() or None
+        snap = _pm.snapshot()
+        if profile_name is not None and profile_name not in snap:
+            return JSONResponse({"error": "unknown profile"}, status_code=404)
+        if profile_name is not None:
+            runtimes = [snap[profile_name], _pm.global_runtime()]
+        else:
+            runtimes = [*snap.values(), _pm.global_runtime()]
+        loop = asyncio.get_running_loop()
+        events = await loop.run_in_executor(
+            None,
+            functools.partial(
+                event_log.recent,
+                _AGENT_ACTIVITY_LIMIT,
+                profile=profile_name,
+                events=ACTIVITY_EVENTS,
+            ),
+        )
+        ages = {rt.name: rt.age for rt in snap.values()}
+        system_prompt = _build_agent_system_prompt(
+            runtimes,
+            _agent_activity_text(events, ages),
+            _stack_versions(config.agent_model),
+        )
+        try:
+            raw = await asyncio.wait_for(
+                classifier.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=_render_conversation(messages),
+                    model=config.agent_model,
+                ),
+                timeout=config.classify_timeout_s,
+            )
+        except Exception:  # noqa: BLE001 - any SDK/transport/timeout error → friendly 502
+            return JSONResponse({"error": "agent chat failed"}, status_code=502)
+        result = _parse_agent_response(raw)
+        event_log.log("agent_chat", profile=profile_name or "", proposals=len(result["proposals"]))
+        return JSONResponse(result)
 
     async def classify(request: Request) -> JSONResponse:
         rt = _resolve_runtime(request)
@@ -2327,6 +2635,9 @@ def create_app(
             Route("/", home_page, methods=["GET"]),
             Route("/health", health),
             Route("/version", version_endpoint, methods=["GET"]),
+            # Flagship "Agent" assistant: PIN-gated conversational chat (read-only; proposes
+            # config changes the parent applies) — the dashboard's default landing page.
+            Route("/agent/chat", agent_chat, methods=["POST"]),
             Route("/classify", classify, methods=["POST"]),
             Route("/search-classify", search_classify, methods=["POST"]),
             Route("/dwell", dwell, methods=["POST"]),

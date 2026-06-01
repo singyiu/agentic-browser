@@ -107,10 +107,13 @@ class FakeClassifier:
             raise self._search_result
         return self._search_result
 
-    async def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+    async def generate(
+        self, *, system_prompt: str, user_prompt: str, model: str | None = None
+    ) -> str:
         self.generate_calls += 1
         self.generate_system_prompt = system_prompt
         self.generate_user_prompt = user_prompt
+        self.generate_model = model
         if isinstance(self._rule_result, Exception):
             raise self._rule_result
         return self._rule_result  # type: ignore[return-value]
