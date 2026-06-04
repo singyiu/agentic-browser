@@ -2887,6 +2887,117 @@ def test_ext_crx_served_without_token(tmp_path: Path) -> None:
     assert resp.content.startswith(b"Cr24")
 
 
+# --- self-hosted browser distribution (/dist/manifest.json, /dist/browser.zip) ---
+
+
+def test_dist_manifest_404_when_not_published(tmp_path: Path) -> None:
+    assert _ext_client(tmp_path).get("/dist/manifest.json").status_code == 404
+
+
+def test_dist_browser_404_when_not_published(tmp_path: Path) -> None:
+    assert _ext_client(tmp_path).get("/dist/browser.zip").status_code == 404
+
+
+def test_dist_manifest_served_without_token(tmp_path: Path) -> None:
+    (tmp_path / "chromium-manifest.json").write_text(
+        '{"version":"125.0.6422.0","bundle_id":"org.chromium.Chromium","sha256":"abc","size":1}'
+    )
+    resp = _ext_client(tmp_path).get("/dist/manifest.json")  # no X-Guardian-Token
+    assert resp.status_code == 200
+    assert resp.json()["version"] == "125.0.6422.0"
+    assert resp.json()["bundle_id"] == "org.chromium.Chromium"
+
+
+def test_dist_browser_served_without_token(tmp_path: Path) -> None:
+    (tmp_path / "browser.zip").write_bytes(b"PK\x03\x04zip-payload")
+    resp = _ext_client(tmp_path).get("/dist/browser.zip")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/zip")
+    assert resp.content.startswith(b"PK")
+
+
+# --- setup health console (GET /setup/health) --------------------------------
+
+
+def test_setup_health_open_during_first_run() -> None:
+    # No PIN yet: the wizard must read status before any PIN exists (like /setup/status).
+    resp = _client(FakeClassifier(Verdict("allow")), parent_pin="").get("/setup/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pin_configured"] is False
+    assert body["guardian"]["ok"] is True
+
+
+def test_setup_health_requires_pin_once_configured() -> None:
+    client = _client(FakeClassifier(Verdict("allow")), parent_pin="testpin")
+    assert client.get("/setup/health").status_code == 403
+    assert client.get("/setup/health", headers=_PIN).status_code == 200
+
+
+def test_setup_health_payload_shape(tmp_path: Path) -> None:
+    app = create_app(
+        replace(_config(), ext_dist_dir=str(tmp_path)),  # empty dir → deterministic "not packed"
+        classifier=FakeClassifier(Verdict("allow")),
+        cache=FakeCache(),
+        event_log=FakeLog(),
+    )
+    body = TestClient(app).get("/setup/health", headers=_PIN).json()
+    assert body["guardian"]["ok"] is True
+    assert isinstance(body["guardian"]["version"], str) and body["guardian"]["version"]
+    assert body["claude_token"]["present"] is True  # _config sets oauth_token="t"
+    assert body["network"]["host"] == "127.0.0.1"
+    assert body["network"]["port"] == 2947
+    assert body["network"]["lan_bound"] is False  # bound to loopback in tests
+    assert body["firewall"]["state"] in {"on", "off", "unknown"}
+    assert body["extension"]["packed"] is False  # empty dist dir
+    assert isinstance(body["profiles"]["count"], int)
+
+
+def test_setup_health_reports_missing_token() -> None:
+    app = create_app(
+        replace(_config(), oauth_token=""),
+        classifier=FakeClassifier(Verdict("allow")),
+        cache=FakeCache(),
+        event_log=FakeLog(),
+    )
+    body = TestClient(app).get("/setup/health", headers=_PIN).json()
+    assert body["claude_token"]["present"] is False
+
+
+def test_setup_health_reports_lan_bound() -> None:
+    app = create_app(
+        replace(_config(), host="0.0.0.0"),
+        classifier=FakeClassifier(Verdict("allow")),
+        cache=FakeCache(),
+        event_log=FakeLog(),
+    )
+    body = TestClient(app).get("/setup/health", headers=_PIN).json()
+    assert body["network"]["lan_bound"] is True
+
+
+def test_setup_health_reports_packed_extension(tmp_path: Path) -> None:
+    (tmp_path / "extension-id.txt").write_text("kmnemdhnpddlknbaiggdnolchnlpgkjl\n")
+    (tmp_path / "aegis.crx").write_bytes(b"Cr24\x03\x00\x00\x00x")
+    app = create_app(
+        replace(_config(), ext_dist_dir=str(tmp_path)),
+        classifier=FakeClassifier(Verdict("allow")),
+        cache=FakeCache(),
+        event_log=FakeLog(),
+    )
+    body = TestClient(app).get("/setup/health", headers=_PIN).json()
+    assert body["extension"]["packed"] is True
+    assert body["extension"]["id"] == "kmnemdhnpddlknbaiggdnolchnlpgkjl"
+
+
+def test_setup_health_counts_kids(tmp_path: Path) -> None:
+    client, _ = _pm_client(tmp_path)
+    client.post("/profiles", json={"name": "alex"}, headers=_PIN)
+    client.post("/profiles", json={"name": "sam"}, headers=_PIN)
+    body = client.get("/setup/health", headers=_PIN).json()
+    assert body["profiles"]["count"] == 2
+    assert set(body["profiles"]["names"]) == {"alex", "sam"}
+
+
 # --- prize points (grant / balance / redeem-for-time / events) ---------------
 
 

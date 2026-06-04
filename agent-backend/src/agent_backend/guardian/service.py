@@ -6,7 +6,10 @@ import asyncio
 import functools
 import hmac
 import json
+import platform
 import re
+import socket
+import subprocess
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable
@@ -447,6 +450,72 @@ def _stack_versions(agent_model: str) -> dict[str, Any]:
         "extension": _read_extension_version(),
         "grafana": _read_grafana_versions(),
         "model": agent_model,
+    }
+
+
+# --- Setup & health console (GET /setup/health) -----------------------------------------------
+# A friendly, NON-SECRET status payload for the setup wizard / devices console. It answers "is the
+# guardian ready, and what's left to do?" without ever exposing the token value or the PIN. Every
+# probe is best-effort and degrades to a safe default — this endpoint never raises a 500.
+def _lan_ip() -> str | None:
+    """This machine's primary LAN IPv4 (the source IP for outbound traffic), or None.
+
+    A ``connect`` on a UDP socket only fixes the routing/source address and sends no packets, so
+    this is fast and side-effect-free even when the TEST-NET target is unreachable.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("192.0.2.1", 53))  # RFC 5737 TEST-NET-1 — never actually contacted
+        return str(sock.getsockname()[0])
+    except OSError:
+        return None
+    finally:
+        sock.close()
+
+
+def _firewall_state() -> str:
+    """macOS application-firewall global state: 'on', 'off', or 'unknown' (best-effort)."""
+    if platform.system() != "Darwin":
+        return "unknown"
+    tool = "/usr/libexec/ApplicationFirewall/socketfilterfw"
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed argv, no shell, bounded timeout
+            [tool, "--getglobalstate"],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    out = result.stdout
+    if "State = 0" in out:
+        return "off"
+    if "State = 1" in out or "State = 2" in out:
+        return "on"
+    return "unknown"
+
+
+def _probe_network_firewall() -> tuple[str | None, str]:
+    """Combine the two blocking probes (socket + subprocess) into one executor hop."""
+    return _lan_ip(), _firewall_state()
+
+
+def _extension_dist_status(dist_dir: str) -> dict[str, Any]:
+    """Whether the kid extension CRX has been packed, plus its id/version (never raises)."""
+    base = Path(dist_dir)
+    ext_id: str | None = None
+    try:
+        id_file = base / "extension-id.txt"
+        if id_file.is_file():
+            raw = id_file.read_text(encoding="utf-8").strip()
+            ext_id = raw if len(raw) == 32 else None
+    except OSError:
+        ext_id = None
+    crx_present = (base / "aegis.crx").is_file()
+    return {
+        "packed": crx_present and ext_id is not None,
+        "id": ext_id,
+        "version": _read_extension_version(),
     }
 
 
@@ -1446,6 +1515,38 @@ def create_app(
             return JSONResponse({"error": "could not save the PIN"}, status_code=500)
         event_log.log("parent_pin_set")  # records the event, never the PIN value
         return JSONResponse({"ok": True})
+
+    async def setup_health(request: Request) -> JSONResponse:
+        # Friendly status for the setup wizard / devices console. During first run (no PIN yet) it
+        # is open so the wizard can show readiness, like /setup/status; once a PIN exists it is
+        # PIN-gated like the rest of the console. The payload carries no secrets.
+        if pin_store.is_configured():
+            guard = _require_pin(request)
+            if guard is not None:
+                return guard
+        kids = [p for p in _pm.list_profiles() if not p.get("is_global")]
+        lan_ip, firewall = await asyncio.get_running_loop().run_in_executor(
+            None, _probe_network_firewall
+        )
+        port = config.port
+        return JSONResponse(
+            {
+                "guardian": {"ok": True, "version": _BACKEND_VERSION},
+                "claude_token": {"present": bool(config.oauth_token)},
+                "model": config.model,
+                "network": {
+                    "host": config.host,
+                    "port": port,
+                    "lan_ip": lan_ip,
+                    "lan_url": f"http://{lan_ip}:{port}" if lan_ip else None,
+                    "lan_bound": config.host in ("0.0.0.0", "::", ""),
+                },
+                "firewall": {"state": firewall},
+                "extension": _extension_dist_status(config.ext_dist_dir),
+                "profiles": {"count": len(kids), "names": [p["name"] for p in kids]},
+                "pin_configured": pin_store.is_configured(),
+            }
+        )
 
     async def review_page(_request: Request) -> RedirectResponse:
         # Folded into the app shell: keep the /review bookmark working by routing into the
@@ -2809,6 +2910,16 @@ def create_app(
     async def ext_crx(_request: Request) -> Response:
         return _ext_artifact("aegis.crx", "application/x-chrome-extension")
 
+    # --- self-hosted browser distribution (the pre-built Chromium served to kid Macs) ---
+    # Fixed filenames from the same dist dir as the extension; UNAUTHENTICATED on purpose: the
+    # kid bootstrapper downloads the browser before it holds any token, and a browser binary is
+    # not a secret. 404 until scripts/release-chromium.sh has published the artifacts.
+    async def dist_manifest(_request: Request) -> Response:
+        return _ext_artifact("chromium-manifest.json", "application/json")
+
+    async def dist_browser(_request: Request) -> Response:
+        return _ext_artifact("browser.zip", "application/zip")
+
     app = Starlette(
         routes=[
             Route("/", home_page, methods=["GET"]),
@@ -2829,6 +2940,7 @@ def create_app(
             Route("/time-request", time_request_endpoint, methods=["GET", "POST"]),
             Route("/setup", setup_page, methods=["GET"]),
             Route("/setup/status", setup_status, methods=["GET"]),
+            Route("/setup/health", setup_health, methods=["GET"]),
             Route("/setup/pin", setup_pin, methods=["POST"]),
             Route("/review", review_page, methods=["GET"]),
             Route("/review/requests", review_requests, methods=["GET"]),
@@ -2893,6 +3005,8 @@ def create_app(
             # Self-hosted extension force-install endpoints (unauthenticated; see handlers).
             Route("/ext/updates.xml", ext_updates, methods=["GET"]),
             Route("/ext/aegis.crx", ext_crx, methods=["GET"]),
+            Route("/dist/manifest.json", dist_manifest, methods=["GET"]),
+            Route("/dist/browser.zip", dist_browser, methods=["GET"]),
             # Shared design-system assets (tokens, component CSS, self-hosted fonts, brand
             # SVG) for the served pages. No auth — purely static, public styling like the
             # page shells themselves. The /static prefix never shadows the exact routes above.

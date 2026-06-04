@@ -25,6 +25,13 @@
       .hint { font-size: 0.82rem; margin: 0.35rem 0 0; min-height: 1.1em; }
       .error { margin-top: 0.6rem; }
       .success-icon { font-size: 2.2rem; margin: 0; }
+      .status-title { font-weight: 600; color: var(--fg-2); margin: 0 0 0.5rem; }
+      .health-rows { list-style: none; padding: 0; margin: 0; }
+      .health-rows li { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.25rem 0; font-size: 0.9rem; }
+      .health-rows .glyph { flex: none; width: 1.1em; text-align: center; font-weight: 700; }
+      .health-rows .ok { color: var(--aegis-sage, #4a7d5f); }
+      .health-rows .bad { color: var(--aegis-terracotta, #c1654a); }
+      .health-rows .muted { color: var(--fg-3, #8a8a8a); }
     </style>
   </head>
   <body>
@@ -43,6 +50,10 @@
       <section id="setup-panel" hidden>
         <div class="card">
           <p class="lead" id="intro"></p>
+        </div>
+        <div class="card" id="status-card" hidden>
+          <p class="status-title">Guardian status</p>
+          <ul id="health-rows" class="health-rows"></ul>
         </div>
         <div class="card">
           <label class="field" for="pin">Create a PIN (4–8 digits)</label>
@@ -68,7 +79,8 @@
         <div class="card">
           <p class="success-icon">✅</p>
           <p id="done-msg" class="lead"></p>
-          <p><a class="cta" href="/review">Go to the review dashboard →</a></p>
+          <p id="done-next" class="hint"></p>
+          <p><a class="cta" href="/">Go to the dashboard →</a></p>
         </div>
       </section>
     </main>
@@ -87,9 +99,62 @@
         }
       }
 
-      function showDone(msg) {
+      function showDone(msg, next) {
         $("done-msg").textContent = msg;
+        $("done-next").textContent = next || "";
         show("done-panel");
+      }
+
+      // Build one status row (glyph + text), XSS-safe via textContent.
+      function healthRow(glyph, glyphClass, text) {
+        const li = document.createElement("li");
+        const g = document.createElement("span");
+        g.className = "glyph " + glyphClass;
+        g.textContent = glyph;
+        const t = document.createElement("span");
+        t.textContent = text;
+        li.append(g, t);
+        return li;
+      }
+
+      // First-run readiness check. /setup/health is open before a PIN exists; once a PIN is set it
+      // becomes PIN-gated, so this only populates during first-time setup.
+      let lanUrl = "";
+      async function renderHealth() {
+        let h;
+        try {
+          const r = await fetch("/setup/health");
+          if (!r.ok) return;
+          h = await r.json();
+        } catch (_e) {
+          return;
+        }
+        const rows = $("health-rows");
+        rows.replaceChildren();
+        if (h.claude_token && h.claude_token.present) {
+          rows.append(healthRow("✓", "ok", "Claude login connected."));
+        } else {
+          rows.append(
+            healthRow("•", "bad", "Claude login needed — run “claude setup-token” and paste it into agent-backend/.env.")
+          );
+        }
+        const net = h.network || {};
+        if (net.lan_bound && net.lan_url) {
+          lanUrl = net.lan_url;
+          rows.append(healthRow("✓", "ok", "Kid Macs can reach this guardian at " + net.lan_url));
+        } else if (!net.lan_bound) {
+          rows.append(
+            healthRow("•", "bad", "Reachable on this Mac only — set GUARDIAN_HOST=0.0.0.0 so kid Macs can connect.")
+          );
+        } else {
+          rows.append(healthRow("•", "muted", "Network address not detected — connect to Wi-Fi or Ethernet."));
+        }
+        if (h.firewall && h.firewall.state === "on") {
+          rows.append(
+            healthRow("!", "muted", "macOS firewall is on — allow the guardian if a kid Mac can’t connect.")
+          );
+        }
+        $("status-card").hidden = false;
       }
 
       function refreshValidity() {
@@ -148,7 +213,9 @@
           $("confirm").value = "";
           showDone(
             "Your parent PIN is set. Keep it secret from your child — you'll enter it to " +
-              "approve or block the sites they ask to unblock."
+              "approve or block the sites they ask to unblock.",
+            "Next: on the dashboard, choose “Add a kid” to set up each child's Mac." +
+              (lanUrl ? "  Kid Macs connect to this guardian at " + lanUrl + "." : "")
           );
           return;
         }
@@ -185,6 +252,7 @@
           "the parent — approve or block the sites your child asks to unblock. Pick something " +
           "you'll remember but your child won't guess.";
         show("setup-panel");
+        renderHealth();
         $("pin").focus();
         refreshValidity();
       }
