@@ -2916,6 +2916,114 @@ def test_dist_browser_served_without_token(tmp_path: Path) -> None:
     assert resp.content.startswith(b"PK")
 
 
+# --- per-profile extension serving (/ext/{profile}/*) ---
+
+
+def test_ext_profile_updates_404_when_not_packed(tmp_path: Path) -> None:
+    assert _ext_client(tmp_path).get("/ext/alex/updates.xml").status_code == 404
+
+
+def test_ext_profile_crx_served(tmp_path: Path) -> None:
+    (tmp_path / "alex").mkdir()
+    (tmp_path / "alex" / "aegis.crx").write_bytes(b"Cr24\x03\x00\x00\x00x")
+    resp = _ext_client(tmp_path).get("/ext/alex/aegis.crx")
+    assert resp.status_code == 200
+    assert resp.content.startswith(b"Cr24")
+
+
+def test_ext_profile_rejects_bad_segment(tmp_path: Path) -> None:
+    # A dot is outside the safe charset → 404; the handler never builds a path from it.
+    assert _ext_client(tmp_path).get("/ext/a.b/updates.xml").status_code == 404
+
+
+# --- per-kid enrollment (POST /enroll, GET /enroll/{profile}) ---
+
+
+def _enroll_client(tmp_path: Path, *, packer: object) -> TestClient:
+    manager = ProfileManager(
+        {}, {}, profiles_path=str(tmp_path / "profiles.json"), data_dir=str(tmp_path / "profiles")
+    )
+    app = create_app(
+        _config(),
+        classifier=FakeClassifier(Verdict("allow")),
+        event_log=FakeLog(),
+        manager=manager,
+        ext_packer=packer,
+    )
+    return TestClient(app)
+
+
+def test_enroll_creates_profile_and_packs(tmp_path: Path) -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    async def fake_packer(profile: str, token: str, endpoint: str) -> None:
+        calls.append((profile, token, endpoint))
+
+    client = _enroll_client(tmp_path, packer=fake_packer)
+    resp = client.post("/enroll", json={"name": "alex"}, headers=_PIN)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["profile"] == "alex"
+    assert body["setup_url"].endswith("/enroll/alex")
+    assert body["update_url"].endswith("/ext/alex/updates.xml")
+    assert "token" not in body  # the token is baked into the CRX, never returned in the clear
+    assert len(calls) == 1 and calls[0][0] == "alex" and calls[0][1]  # packer got the profile+token
+
+
+def test_enroll_existing_profile_reuses_token(tmp_path: Path) -> None:
+    seen: list[str] = []
+
+    async def fake_packer(profile: str, token: str, endpoint: str) -> None:
+        seen.append(token)
+
+    client = _enroll_client(tmp_path, packer=fake_packer)
+    created = client.post("/profiles", json={"name": "sam"}, headers=_PIN).json()["token"]
+    client.post("/enroll", json={"name": "sam"}, headers=_PIN)
+    assert seen and seen[-1] == created  # reused the existing token, did not regenerate
+
+
+def test_enroll_requires_pin(tmp_path: Path) -> None:
+    async def noop(profile: str, token: str, endpoint: str) -> None:
+        return None
+
+    assert (
+        _enroll_client(tmp_path, packer=noop).post("/enroll", json={"name": "x"}).status_code == 403
+    )
+
+
+def test_enroll_bad_name_422(tmp_path: Path) -> None:
+    async def noop(profile: str, token: str, endpoint: str) -> None:
+        return None
+
+    resp = _enroll_client(tmp_path, packer=noop).post("/enroll", json={"name": "a/b"}, headers=_PIN)
+    assert resp.status_code == 422
+
+
+def test_enroll_packer_failure_500(tmp_path: Path) -> None:
+    async def boom(profile: str, token: str, endpoint: str) -> None:
+        raise RuntimeError("pack failed")
+
+    resp = _enroll_client(tmp_path, packer=boom).post(
+        "/enroll", json={"name": "alex"}, headers=_PIN
+    )
+    assert resp.status_code == 500
+
+
+def test_enroll_download_serves_setup_command(tmp_path: Path) -> None:
+    resp = _ext_client(tmp_path).get("/enroll/alex")  # unauthenticated (kid Mac has no PIN)
+    assert resp.status_code == 200
+    assert "Set up alex.command" in resp.headers["content-disposition"]
+    body = resp.text
+    assert "__ENDPOINT__" not in body and "__PROFILE__" not in body  # placeholders substituted
+    assert 'PROFILE="alex"' in body  # this kid's profile is baked into the script
+    assert 'ENDPOINT="http' in body  # the guardian's LAN URL is baked in
+    assert "/ext/$PROFILE/updates.xml" in body  # script targets this profile's per-kid CRX
+
+
+def test_enroll_download_rejects_bad_profile(tmp_path: Path) -> None:
+    assert _ext_client(tmp_path).get("/enroll/a.b").status_code == 404
+
+
 # --- setup health console (GET /setup/health) --------------------------------
 
 

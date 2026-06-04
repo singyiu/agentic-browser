@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Aegis — set up the locked browser on THIS child's Mac.
+#
+# You don't edit this file. The guardian generated it for one child and filled in its own network
+# address. Double-click it (if macOS says it's from an unidentified developer, right-click → Open),
+# and enter this Mac's password once when asked.
+#
+# What it does:
+#   1. Downloads the Aegis browser from your guardian Mac and installs it to /Applications.
+#   2. Locks it to the parental-control extension via a managed-preferences policy (needs the
+#      Mac password — that's the one administrator step).
+#   3. Launches it. From then on it reports to the guardian and enforces your rules.
+#
+# This file is safe to re-run (e.g. to repair the install).
+set -uo pipefail
+
+ENDPOINT="__ENDPOINT__"
+PROFILE="__PROFILE__"
+POLICY_PLIST="/Library/Managed Preferences/org.chromium.Chromium.plist"
+APPS_DIR="/Applications"
+TMP_ZIP="${TMPDIR:-/tmp}/aegis-browser.zip"
+
+bold(){ printf '\033[1m%s\033[0m\n' "$*"; }
+ok(){   printf '  \033[32m✓\033[0m %s\n' "$*"; }
+warn(){ printf '  \033[33m!\033[0m %s\n' "$*"; }
+step(){ printf '\n\033[1m[%s/5]\033[0m \033[1m%s\033[0m\n' "$1" "$2"; }
+die(){  printf '  \033[31m✗\033[0m %s\n' "$*" >&2; printf '\nSetup stopped. %s\n' "${2:-Please tell the parent.}" >&2; exit 1; }
+
+json_field(){ grep -oE "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed -E "s/.*:[[:space:]]*\"([^\"]*)\"/\1/" | head -1; }
+
+clear 2>/dev/null || true
+bold "Aegis — setting up this child's browser"
+printf 'Child profile: %s\nGuardian:      %s\n' "$PROFILE" "$ENDPOINT"
+
+# --- 1. Pre-flight -------------------------------------------------------------
+step 1 "Checking this Mac"
+[ "$(uname -s)" = "Darwin" ] || die "This setup is for macOS only."
+command -v curl >/dev/null 2>&1 || die "curl is missing (it ships with macOS)."
+if ! curl -fsS -m 5 "$ENDPOINT/health" >/dev/null 2>&1; then
+  die "Can't reach the guardian at $ENDPOINT — make sure the guardian Mac is on and on this Wi-Fi."
+fi
+ok "Guardian is reachable."
+
+# --- 2. Download the browser ---------------------------------------------------
+step 2 "Downloading the Aegis browser"
+MANIFEST="$(curl -fsSL "$ENDPOINT/dist/manifest.json" 2>/dev/null)" \
+  || die "The guardian hasn't published the browser yet (ask the parent to run release-chromium.sh)."
+SHA_EXPECTED="$(printf '%s' "$MANIFEST" | grep -oE '"sha256"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"' | grep -oE '[0-9a-f]{64}' | head -1)"
+APP_NAME="$(printf '%s' "$MANIFEST" | json_field app_name)"; APP_NAME="${APP_NAME:-Chromium.app}"
+VERSION="$(printf '%s' "$MANIFEST" | json_field version)"
+curl -fSL --progress-bar "$ENDPOINT/dist/browser.zip" -o "$TMP_ZIP" || die "Download failed."
+if [ -n "$SHA_EXPECTED" ]; then
+  SHA_GOT="$(shasum -a 256 "$TMP_ZIP" | awk '{print $1}')"
+  [ "$SHA_GOT" = "$SHA_EXPECTED" ] || die "Download is corrupted (checksum mismatch). Try again."
+  ok "Downloaded ${VERSION:-browser} and verified its checksum."
+else
+  warn "No checksum in the guardian manifest — skipping verification."
+fi
+
+# --- 3. Install ----------------------------------------------------------------
+step 3 "Installing to $APPS_DIR/$APP_NAME"
+rm -rf "$APPS_DIR/$APP_NAME"
+ditto -x -k "$TMP_ZIP" "$APPS_DIR" || die "Could not unpack the browser into $APPS_DIR."
+rm -f "$TMP_ZIP"
+# Self-built browser → clear the download-quarantine flag so Gatekeeper allows it to launch.
+xattr -dr com.apple.quarantine "$APPS_DIR/$APP_NAME" 2>/dev/null || true
+ok "Installed."
+
+# --- 4. Lock it to the parental-control extension (needs the Mac password) -----
+step 4 "Locking the browser (enter this Mac's password if asked)"
+EXT_ID="$(curl -fsSL "$ENDPOINT/ext/$PROFILE/updates.xml" 2>/dev/null | grep -oE "appid='[a-p]{32}'" | grep -oE '[a-p]{32}' | head -1)"
+[ "${#EXT_ID}" -eq 32 ] || die "Could not read the extension id from the guardian."
+UPDATE_URL="$ENDPOINT/ext/$PROFILE/updates.xml"
+sudo mkdir -p "$(dirname "$POLICY_PLIST")"
+sudo tee "$POLICY_PLIST" >/dev/null <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>ExtensionSettings</key>
+  <dict>
+    <key>*</key>
+    <dict>
+      <key>installation_mode</key><string>blocked</string>
+      <key>blocked_install_message</key><string>Extensions are managed by your guardian.</string>
+    </dict>
+    <key>$EXT_ID</key>
+    <dict>
+      <key>installation_mode</key><string>force_installed</string>
+      <key>update_url</key><string>$UPDATE_URL</string>
+      <key>toolbar_pin</key><string>force_pinned</string>
+    </dict>
+  </dict>
+  <key>ExtensionAllowInsecureUpdates</key><true/>
+</dict>
+</plist>
+PLIST
+sudo plutil -lint "$POLICY_PLIST" >/dev/null || die "The policy file is invalid."
+sudo chown root:wheel "$POLICY_PLIST"; sudo chmod 644 "$POLICY_PLIST"
+sudo killall cfprefsd 2>/dev/null || true
+ok "Locked to the parental-control extension."
+
+# --- 5. Launch -----------------------------------------------------------------
+step 5 "Starting the browser"
+open -a "$APPS_DIR/$APP_NAME" || warn "Open $APPS_DIR/$APP_NAME yourself to finish."
+printf '\n'
+bold "✓ Done. This Mac is now set up for $PROFILE."
+printf 'The browser checks every page with your guardian and enforces your rules.\n'

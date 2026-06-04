@@ -519,6 +519,22 @@ def _extension_dist_status(dist_dir: str) -> dict[str, Any]:
     }
 
 
+# --- Per-kid enrollment (POST /enroll, GET /enroll/{profile}) ---------------------------------
+# Packing a per-kid CRX is delegated to a packer callable so it can be faked in tests; the default
+# shells out to scripts/pack-extension.sh with that kid's token + the guardian's LAN endpoint. The
+# kid-setup .command served to each kid Mac is rendered from a template with those values baked in.
+ExtPacker = Callable[[str, str, str], Awaitable[None]]  # (profile, token, endpoint) -> None
+
+_KID_BOOTSTRAP_TEMPLATE = _REPO_ROOT / "agent-backend" / "deploy" / "kid-bootstrap.command.template"
+_SAFE_PROFILE_SEG = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _render_kid_bootstrap(endpoint: str, profile: str) -> str:
+    """Render the kid-setup .command for a profile (endpoint + profile substituted in)."""
+    text = _KID_BOOTSTRAP_TEMPLATE.read_text(encoding="utf-8")
+    return text.replace("__ENDPOINT__", endpoint).replace("__PROFILE__", profile)
+
+
 # --- Agent chat: context assembly + structured-envelope parsing (POST /agent/chat) ------------
 # The flagship guardian "Agent" page. Each turn assembles bounded server-side context (software
 # digest, per-profile config snapshot, a recent-activity slice, stack versions) and makes ONE
@@ -861,6 +877,7 @@ def create_app(
     pin_store: PinStore | None = None,
     manager: ProfileManager | None = None,
     time_ledger: TimeLedger | None = None,
+    ext_packer: ExtPacker | None = None,
 ) -> Starlette:
     """Build the guardian app. Dependencies may be injected for testing.
 
@@ -2898,8 +2915,11 @@ def create_app(
     # cannot present the X-Guardian-Token (same rationale as /static and /health). Both
     # serve fixed filenames from a configured dir — no path params, so no traversal risk —
     # and 404 until scripts/pack-extension.sh has produced the artifacts.
-    def _ext_artifact(filename: str, media_type: str) -> Response:
-        path = Path(config.ext_dist_dir) / filename
+    def _ext_artifact(filename: str, media_type: str, *, profile: str | None = None) -> Response:
+        base = Path(config.ext_dist_dir)
+        if profile is not None:
+            base = base / profile
+        path = base / filename
         if not path.is_file():
             return Response("extension not packed", status_code=404, media_type="text/plain")
         return FileResponse(path, media_type=media_type)
@@ -2910,6 +2930,21 @@ def create_app(
     async def ext_crx(_request: Request) -> Response:
         return _ext_artifact("aegis.crx", "application/x-chrome-extension")
 
+    # Per-profile artifacts (one packed CRX per kid, each with its own baked token + LAN endpoint).
+    # The {profile} segment is validated against a strict charset so it cannot traverse out of the
+    # dist dir. Each kid's managed policy points its update_url at /ext/<profile>/updates.xml.
+    async def ext_updates_profile(request: Request) -> Response:
+        profile = request.path_params["profile"]
+        if not _SAFE_PROFILE_SEG.fullmatch(profile):
+            return Response("not found", status_code=404, media_type="text/plain")
+        return _ext_artifact("updates.xml", "text/xml", profile=profile)
+
+    async def ext_crx_profile(request: Request) -> Response:
+        profile = request.path_params["profile"]
+        if not _SAFE_PROFILE_SEG.fullmatch(profile):
+            return Response("not found", status_code=404, media_type="text/plain")
+        return _ext_artifact("aegis.crx", "application/x-chrome-extension", profile=profile)
+
     # --- self-hosted browser distribution (the pre-built Chromium served to kid Macs) ---
     # Fixed filenames from the same dist dir as the extension; UNAUTHENTICATED on purpose: the
     # kid bootstrapper downloads the browser before it holds any token, and a browser binary is
@@ -2919,6 +2954,99 @@ def create_app(
 
     async def dist_browser(_request: Request) -> Response:
         return _ext_artifact("browser.zip", "application/zip")
+
+    # --- per-kid enrollment ---
+    # The default packer shells out to scripts/pack-extension.sh to build that kid's CRX (token +
+    # LAN endpoint baked in) into {ext_dist_dir}/{profile}/. Tests inject a fake packer instead.
+    async def _default_pack_profile_crx(profile: str, token: str, endpoint: str) -> None:
+        out_dir = str(Path(config.ext_dist_dir) / profile)
+        script = _REPO_ROOT / "agent-backend" / "scripts" / "pack-extension.sh"
+        await asyncio.get_running_loop().run_in_executor(
+            None,
+            functools.partial(
+                subprocess.run,
+                [
+                    "bash",
+                    str(script),
+                    "--profile",
+                    profile,
+                    "--token",
+                    token,
+                    "--endpoint",
+                    endpoint,
+                    "--out",
+                    out_dir,
+                ],
+                check=True,
+                capture_output=True,
+                timeout=120,
+            ),
+        )
+
+    packer: ExtPacker = ext_packer or _default_pack_profile_crx
+
+    async def enroll(request: Request) -> JSONResponse:
+        # Parent-only: create (or reuse) the kid's profile, pack that kid's CRX (token + LAN
+        # endpoint baked in), and return the one-time setup link to open on the kid Mac.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "invalid JSON body"}, status_code=422)
+        name = str(body.get("name", "")).strip()
+        loop = asyncio.get_running_loop()
+        snap = _pm.snapshot()
+        if name in snap:
+            runtime = snap[name]
+            token = runtime.token
+        else:
+            try:
+                runtime, token = await loop.run_in_executor(None, _pm.create, name)
+            except InvalidProfileNameError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=422)
+            except (ConfigError, OSError):
+                return JSONResponse({"error": "could not create profile data"}, status_code=500)
+        lan_ip, _firewall = await loop.run_in_executor(None, _probe_network_firewall)
+        endpoint = f"http://{lan_ip or config.host}:{config.port}"
+        try:
+            await packer(runtime.name, token, endpoint)
+        except Exception:  # noqa: BLE001 — any packing failure is a controlled 500, never the token
+            return JSONResponse(
+                {"error": "could not build the kid browser package"}, status_code=500
+            )
+        event_log.log("kid_enrolled", profile=runtime.name)  # never the token
+        return JSONResponse(
+            {
+                "profile": runtime.name,
+                "endpoint": endpoint,
+                "setup_url": f"{endpoint}/enroll/{runtime.name}",
+                "update_url": f"{endpoint}/ext/{runtime.name}/updates.xml",
+            },
+            status_code=201,
+        )
+
+    async def enroll_download(request: Request) -> Response:
+        # Served to the KID Mac (unauthenticated — the kid has no PIN). Returns a double-clickable
+        # .command that installs the locked browser for this profile. The {profile} segment is
+        # charset-validated, and only our own endpoint/profile values are substituted in.
+        profile = request.path_params["profile"]
+        if not _SAFE_PROFILE_SEG.fullmatch(profile):
+            return Response("not found", status_code=404, media_type="text/plain")
+        lan_ip, _firewall = await asyncio.get_running_loop().run_in_executor(
+            None, _probe_network_firewall
+        )
+        endpoint = f"http://{lan_ip or config.host}:{config.port}"
+        try:
+            script = _render_kid_bootstrap(endpoint, profile)
+        except OSError:
+            return Response("setup template unavailable", status_code=500, media_type="text/plain")
+        return Response(
+            script,
+            media_type="text/x-shellscript",
+            headers={"Content-Disposition": f'attachment; filename="Set up {profile}.command"'},
+        )
 
     app = Starlette(
         routes=[
@@ -3005,8 +3133,12 @@ def create_app(
             # Self-hosted extension force-install endpoints (unauthenticated; see handlers).
             Route("/ext/updates.xml", ext_updates, methods=["GET"]),
             Route("/ext/aegis.crx", ext_crx, methods=["GET"]),
+            Route("/ext/{profile}/updates.xml", ext_updates_profile, methods=["GET"]),
+            Route("/ext/{profile}/aegis.crx", ext_crx_profile, methods=["GET"]),
             Route("/dist/manifest.json", dist_manifest, methods=["GET"]),
             Route("/dist/browser.zip", dist_browser, methods=["GET"]),
+            Route("/enroll", enroll, methods=["POST"]),
+            Route("/enroll/{profile}", enroll_download, methods=["GET"]),
             # Shared design-system assets (tokens, component CSS, self-hosted fonts, brand
             # SVG) for the served pages. No auth — purely static, public styling like the
             # page shells themselves. The /static prefix never shadows the exact routes above.

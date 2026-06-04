@@ -208,14 +208,22 @@
     const input = $("prof-name");
     const name = input.value.trim();
     const hint = $("prof-hint");
+    const btn = $("prof-add-btn");
     setHint(hint, "");
     if (!name) {
-      setHint(hint, "Enter a name for the profile.");
+      setHint(hint, "Enter a name for this child.");
       return;
     }
+    // /enroll creates the profile (if new) and packs this kid's browser extension with their
+    // token + the guardian's LAN address baked in. Packing takes a few seconds — show progress.
     let r;
+    const label = btn ? btn.textContent : "";
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Setting up…";
+    }
     try {
-      r = await api("/profiles", {
+      r = await api("/enroll", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -223,18 +231,52 @@
     } catch (_e) {
       toast("Could not reach the guardian service.");
       return;
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
     }
     if (r.status === 201) {
       input.value = "";
-      showTokenReveal(await r.json());
+      showEnrollReveal(await r.json());
       loadProfiles();
       return;
     }
-    if (r.status === 409)
-      setHint(hint, "A profile with that name already exists.");
-    else if (r.status === 422)
+    if (r.status === 422)
       setHint(hint, "Use letters, digits, '-' or '_' (max 64).");
-    else setHint(hint, "Could not create (" + r.status + ").");
+    else setHint(hint, "Could not set up this child (" + r.status + ").");
+  }
+
+  function showEnrollReveal(body) {
+    const panel = el(
+      "div",
+      { class: "card prof-reveal" },
+      el("h2", { text: "Set up " + body.profile + "’s Mac" }),
+      el("p", {
+        class: "muted",
+        text:
+          "On " +
+          body.profile +
+          "’s Mac, open this link in a browser. It downloads a setup file — double-click it " +
+          "(if macOS warns it’s from an unidentified developer, right-click → Open) and enter " +
+          "that Mac’s password once when asked. The locked browser installs itself.",
+      }),
+      codeBlock("Open on " + body.profile + "’s Mac", body.setup_url),
+    );
+    const done = el("button", {
+      class: "primary",
+      type: "button",
+      text: "Done",
+    });
+    done.addEventListener("click", () => {
+      $("prof-reveal").replaceChildren();
+      $("prof-reveal").hidden = true;
+    });
+    panel.append(done);
+    $("prof-reveal").replaceChildren(panel);
+    $("prof-reveal").hidden = false;
+    $("prof-reveal").scrollIntoView({ block: "nearest" });
   }
 
   function showTokenReveal(body) {
