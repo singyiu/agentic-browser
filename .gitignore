@@ -28,3 +28,6 @@ agent-backend/.chromium-dist/
 
 # observability stack local config (host paths/ports)
 observability/.env
+
+# superpowers brainstorm / visual-companion scratch artifacts (local only)
+.superpowers/
