@@ -2916,6 +2916,13 @@ def test_dist_browser_served_without_token(tmp_path: Path) -> None:
     assert resp.content.startswith(b"PK")
 
 
+def test_dist_kid_updater_served(tmp_path: Path) -> None:
+    # The kid-side updater script is served from the repo so each kid Mac can fetch it during setup.
+    resp = _ext_client(tmp_path).get("/dist/kid-update-check.sh")
+    assert resp.status_code == 200
+    assert "aegis-update" in resp.text  # a marker from our updater script
+
+
 # --- per-profile extension serving (/ext/{profile}/*) ---
 
 

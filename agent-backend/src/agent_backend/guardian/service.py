@@ -2955,6 +2955,13 @@ def create_app(
     async def dist_browser(_request: Request) -> Response:
         return _ext_artifact("browser.zip", "application/zip")
 
+    async def dist_kid_updater(_request: Request) -> Response:
+        # The self-contained kid-side updater script; each kid Mac downloads it once during setup.
+        path = _REPO_ROOT / "agent-backend" / "scripts" / "kid-update-check.sh"
+        if not path.is_file():
+            return Response("updater unavailable", status_code=404, media_type="text/plain")
+        return FileResponse(path, media_type="text/x-shellscript")
+
     # --- per-kid enrollment ---
     # The default packer shells out to scripts/pack-extension.sh to build that kid's CRX (token +
     # LAN endpoint baked in) into {ext_dist_dir}/{profile}/. Tests inject a fake packer instead.
@@ -3137,6 +3144,7 @@ def create_app(
             Route("/ext/{profile}/aegis.crx", ext_crx_profile, methods=["GET"]),
             Route("/dist/manifest.json", dist_manifest, methods=["GET"]),
             Route("/dist/browser.zip", dist_browser, methods=["GET"]),
+            Route("/dist/kid-update-check.sh", dist_kid_updater, methods=["GET"]),
             Route("/enroll", enroll, methods=["POST"]),
             Route("/enroll/{profile}", enroll_download, methods=["GET"]),
             # Shared design-system assets (tokens, component CSS, self-hosted fonts, brand
