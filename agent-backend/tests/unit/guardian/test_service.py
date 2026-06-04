@@ -2923,6 +2923,12 @@ def test_dist_kid_updater_served(tmp_path: Path) -> None:
     assert "aegis-update" in resp.text  # a marker from our updater script
 
 
+def test_dist_kid_uninstaller_served(tmp_path: Path) -> None:
+    resp = _ext_client(tmp_path).get("/dist/uninstall-kid.sh")
+    assert resp.status_code == 200
+    assert "no longer managed by Aegis" in resp.text  # a marker from our uninstaller
+
+
 # --- per-profile extension serving (/ext/{profile}/*) ---
 
 

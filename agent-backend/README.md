@@ -8,6 +8,43 @@ Aegis runs an autonomous loop with Claude (your **Claude Max** subscription, via
 Claude Agent SDK) that drives a Chromium tab through a **browser-control MCP server**.
 Claude's config/skills are isolated from your personal `~/.claude` via `CLAUDE_CONFIG_DIR`.
 
+## Quick start for parents (the easy way)
+
+The friendly path automates almost everything. You only ever type two things: your Claude Max
+login (once) and a Mac password (for the steps macOS requires admin for). **macOS only for now.**
+
+**On the guardian Mac (the parent's computer), once:**
+
+1. Double-click **`agent-backend/scripts/install-guardian.command`** in Finder. It checks your Mac,
+   builds the environment, generates the shared secret, binds the guardian to your network, helps
+   you sign in to Claude Max, allows it through the firewall, installs it as an always-on service,
+   and opens the setup console in your browser.
+2. In the console, set your **parent PIN**. You'll see a green readiness check and your guardian's
+   network address.
+3. Click **Add a kid**, type the child's name, and copy the one-time setup link it shows.
+
+**On each child's Mac, once:**
+
+4. Open that setup link in a browser. It downloads a **"Set up &lt;name&gt;.command"** file —
+   double-click it (if macOS warns it's from an unidentified developer, right-click → **Open**) and
+   enter that Mac's password once. The locked browser downloads, installs, locks itself to the
+   parental-control extension, and launches. From then on it checks every page with your guardian
+   and **updates itself automatically**.
+
+**Keeping things up to date:**
+
+- Guardian: `bash agent-backend/scripts/update-guardian.sh` (or the **Update** button in the console).
+- Kid browsers: nothing to do — each kid Mac re-checks the guardian hourly and refreshes itself.
+- Remove a kid Mac: open `http://<guardian-address>/dist/uninstall-kid.sh` on that Mac and run the
+  downloaded file (`bash ~/Downloads/uninstall-kid.sh`). Remove the guardian with
+  `scripts/uninstall-guardian-service.sh`.
+
+> The kid browser is a **pre-built** Chromium published once by a developer
+> (`scripts/release-chromium.sh`) and served by the guardian over your LAN — nobody compiles
+> anything on the parent's or child's Mac.
+
+The rest of this document is the **developer / manual** reference.
+
 ## How it fits together
 
 ```

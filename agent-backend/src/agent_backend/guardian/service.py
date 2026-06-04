@@ -2955,12 +2955,19 @@ def create_app(
     async def dist_browser(_request: Request) -> Response:
         return _ext_artifact("browser.zip", "application/zip")
 
-    async def dist_kid_updater(_request: Request) -> Response:
-        # The self-contained kid-side updater script; each kid Mac downloads it once during setup.
-        path = _REPO_ROOT / "agent-backend" / "scripts" / "kid-update-check.sh"
+    def _serve_repo_script(filename: str) -> Response:
+        # Serve a self-contained kid-side script from the repo so a kid Mac (which has no repo) can
+        # fetch it during setup/removal. Fixed names from a known dir — no params, no traversal.
+        path = _REPO_ROOT / "agent-backend" / "scripts" / filename
         if not path.is_file():
-            return Response("updater unavailable", status_code=404, media_type="text/plain")
+            return Response("not available", status_code=404, media_type="text/plain")
         return FileResponse(path, media_type="text/x-shellscript")
+
+    async def dist_kid_updater(_request: Request) -> Response:
+        return _serve_repo_script("kid-update-check.sh")
+
+    async def dist_kid_uninstaller(_request: Request) -> Response:
+        return _serve_repo_script("uninstall-kid.sh")
 
     # --- per-kid enrollment ---
     # The default packer shells out to scripts/pack-extension.sh to build that kid's CRX (token +
@@ -3145,6 +3152,7 @@ def create_app(
             Route("/dist/manifest.json", dist_manifest, methods=["GET"]),
             Route("/dist/browser.zip", dist_browser, methods=["GET"]),
             Route("/dist/kid-update-check.sh", dist_kid_updater, methods=["GET"]),
+            Route("/dist/uninstall-kid.sh", dist_kid_uninstaller, methods=["GET"]),
             Route("/enroll", enroll, methods=["POST"]),
             Route("/enroll/{profile}", enroll_download, methods=["GET"]),
             # Shared design-system assets (tokens, component CSS, self-hosted fonts, brand
