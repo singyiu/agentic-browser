@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync
+      - name: Lint (ruff)
+        run: uv run ruff check src/ tests/
+      - name: Format check (black)
+        run: uv run black --check src/ tests/
+      - name: Tests
+        run: uv run pytest -x -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Frontend unit tests
+        run: node --test tests/frontend/
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Informational only: surfaces findings in the log without failing the build.
+      - name: shellcheck (non-blocking)
+        run: |
+          shellcheck agent-backend/scripts/*.sh \
+            agent-backend/scripts/*.command \
+            agent-backend/deploy/*.template || true
