@@ -152,14 +152,14 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
         )
 
     return [
-        Route("/ext/updates.xml", ext_updates),
-        Route("/ext/aegis.crx", ext_crx),
-        Route("/ext/{profile}/updates.xml", ext_updates_profile),
-        Route("/ext/{profile}/aegis.crx", ext_crx_profile),
-        Route("/dist/manifest", dist_manifest),
-        Route("/dist/browser", dist_browser),
-        Route("/dist/kid-updater", dist_kid_updater),
-        Route("/dist/kid-uninstaller", dist_kid_uninstaller),
+        Route("/ext/updates.xml", ext_updates, methods=["GET"]),
+        Route("/ext/aegis.crx", ext_crx, methods=["GET"]),
+        Route("/ext/{profile}/updates.xml", ext_updates_profile, methods=["GET"]),
+        Route("/ext/{profile}/aegis.crx", ext_crx_profile, methods=["GET"]),
+        Route("/dist/manifest.json", dist_manifest, methods=["GET"]),
+        Route("/dist/browser.zip", dist_browser, methods=["GET"]),
+        Route("/dist/kid-update-check.sh", dist_kid_updater, methods=["GET"]),
+        Route("/dist/uninstall-kid.sh", dist_kid_uninstaller, methods=["GET"]),
         Route("/enroll", enroll, methods=["POST"]),
         Route("/enroll/{profile}", enroll_download, methods=["GET"]),
     ]
