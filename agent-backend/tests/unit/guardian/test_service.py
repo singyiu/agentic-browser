@@ -299,6 +299,25 @@ def test_dwell_rejects_bad_payload() -> None:
     )
 
 
+def test_dwell_rejects_above_max() -> None:
+    # A forged report must not be able to consume a whole day's budget in one POST.
+    client = _client(FakeClassifier(Verdict("allow")))
+    six_hours_ms = 6 * 60 * 60 * 1000
+    assert (
+        client.post(
+            "/dwell", json={"url_key": "k", "dwell_ms": six_hours_ms + 1}, headers=_HEADERS
+        ).status_code
+        == 422
+    )
+
+
+def test_dwell_accepts_max_boundary() -> None:
+    client = _client(FakeClassifier(Verdict("allow")))
+    six_hours_ms = 6 * 60 * 60 * 1000
+    resp = client.post("/dwell", json={"url_key": "k", "dwell_ms": six_hours_ms}, headers=_HEADERS)
+    assert resp.status_code == 200
+
+
 # --- whitelist: hard URL short-circuit ---
 
 

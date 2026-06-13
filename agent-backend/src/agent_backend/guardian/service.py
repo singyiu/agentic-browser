@@ -102,6 +102,9 @@ SUMMARY_LIMIT_DEFAULT = 200
 _MAX_TIME_TEXT = 2000
 _MAX_TIME_REASON = 500
 _MAX_REQUEST_MINUTES = 1440
+# Cap a single dwell report: the heartbeat flushes every ~30s, so anything beyond hours
+# is a forged or corrupt report that would otherwise burn the whole day's budget at once.
+_MAX_DWELL_MS = 6 * 60 * 60 * 1000
 _TIME_POLICY_SYSTEM_PROMPT = (
     "You convert a parent's natural-language screen-time rules into a strict JSON object for "
     "a parental-control browser. Output ONLY the JSON object, no prose.\n\n"
@@ -1256,9 +1259,10 @@ def create_app(
             or isinstance(dwell_ms, bool)
             or not isinstance(dwell_ms, (int, float))
             or dwell_ms < 0
+            or dwell_ms > _MAX_DWELL_MS
         ):
             return JSONResponse(
-                {"error": "url_key and non-negative dwell_ms required"}, status_code=422
+                {"error": "url_key and dwell_ms in [0, 6h] required"}, status_code=422
             )
         host = extract_host(url_key)
         now = datetime.now(UTC)
