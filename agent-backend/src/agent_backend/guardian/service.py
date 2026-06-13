@@ -1361,6 +1361,11 @@ def create_app(
                 for value in rt.whitelist.current().values
             ]
             return JSONResponse({"entries": entries})
+        # Mutations are parent-only: the kid whitelist outranks the Global blocklist
+        # ("individual wins"), so a kid-held token alone must never add entries.
+        guard = _require_pin(request)
+        if guard is not None:
+            return guard
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001

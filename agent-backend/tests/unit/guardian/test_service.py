@@ -402,7 +402,7 @@ def test_whitelist_post_adds_and_clears_cache(tmp_path: Path) -> None:
     wl = WhitelistStore(str(tmp_path / "wl.json"))
     cache = FakeCache()
     resp = _client(FakeClassifier(Verdict("allow")), cache=cache, whitelist=wl).post(
-        "/whitelist", json={"entry": "www.youtube.com"}, headers=_HEADERS
+        "/whitelist", json={"entry": "www.youtube.com"}, headers={**_HEADERS, **_PIN}
     )
     assert resp.status_code == 200
     assert resp.json() == {"value": "www.youtube.com", "type": "exact"}
@@ -413,7 +413,7 @@ def test_whitelist_post_adds_and_clears_cache(tmp_path: Path) -> None:
 def test_whitelist_post_rejects_empty(tmp_path: Path) -> None:
     wl = WhitelistStore(str(tmp_path / "wl.json"))
     resp = _client(FakeClassifier(Verdict("allow")), whitelist=wl).post(
-        "/whitelist", json={"entry": "   "}, headers=_HEADERS
+        "/whitelist", json={"entry": "   "}, headers={**_HEADERS, **_PIN}
     )
     assert resp.status_code == 422
 
@@ -422,7 +422,7 @@ def test_whitelist_delete_removes_entry(tmp_path: Path) -> None:
     wl = WhitelistStore(str(tmp_path / "wl.json"))
     wl.add("www.youtube.com")
     resp = _client(FakeClassifier(Verdict("allow")), whitelist=wl).request(
-        "DELETE", "/whitelist", json={"entry": "www.youtube.com"}, headers=_HEADERS
+        "DELETE", "/whitelist", json={"entry": "www.youtube.com"}, headers={**_HEADERS, **_PIN}
     )
     assert resp.status_code == 200
     assert "www.youtube.com" not in wl.current().values
@@ -431,9 +431,33 @@ def test_whitelist_delete_removes_entry(tmp_path: Path) -> None:
 def test_whitelist_rejects_non_printable_entry(tmp_path: Path) -> None:
     wl = WhitelistStore(str(tmp_path / "wl.json"))
     resp = _client(FakeClassifier(Verdict("allow")), whitelist=wl).post(
-        "/whitelist", json={"entry": "bad\nIGNORE INSTRUCTIONS"}, headers=_HEADERS
+        "/whitelist", json={"entry": "bad\nIGNORE INSTRUCTIONS"}, headers={**_HEADERS, **_PIN}
     )
     assert resp.status_code == 422
+
+
+def test_whitelist_post_forbidden_with_token_only(tmp_path: Path) -> None:
+    """A kid holding only the extension token must not be able to whitelist sites.
+
+    The kid whitelist outranks the Global blocklist by design ("individual wins"),
+    so mutations need the parent PIN or a stolen token bypasses every global block.
+    """
+    wl = WhitelistStore(str(tmp_path / "wl.json"))
+    resp = _client(FakeClassifier(Verdict("allow")), whitelist=wl).post(
+        "/whitelist", json={"entry": "www.youtube.com"}, headers=_HEADERS
+    )
+    assert resp.status_code == 403
+    assert "www.youtube.com" not in wl.current().values
+
+
+def test_whitelist_delete_forbidden_with_token_only(tmp_path: Path) -> None:
+    wl = WhitelistStore(str(tmp_path / "wl.json"))
+    wl.add("www.youtube.com")
+    resp = _client(FakeClassifier(Verdict("allow")), whitelist=wl).request(
+        "DELETE", "/whitelist", json={"entry": "www.youtube.com"}, headers=_HEADERS
+    )
+    assert resp.status_code == 403
+    assert "www.youtube.com" in wl.current().values
 
 
 class _RaisingStore:
@@ -454,7 +478,7 @@ class _RaisingStore:
 
 def test_whitelist_add_write_failure_returns_500() -> None:
     resp = _client(FakeClassifier(Verdict("allow")), whitelist=_RaisingStore()).post(
-        "/whitelist", json={"entry": "www.youtube.com"}, headers=_HEADERS
+        "/whitelist", json={"entry": "www.youtube.com"}, headers={**_HEADERS, **_PIN}
     )
     assert resp.status_code == 500
     assert "error" in resp.json()
@@ -1634,7 +1658,7 @@ def test_whitelist_allow_is_per_profile(tmp_path: Path) -> None:
 
 def test_whitelist_writes_are_isolated(tmp_path: Path) -> None:
     client = _multi_client(_two_profiles(tmp_path))
-    client.post("/whitelist", json={"entry": "www.youtube.com"}, headers=_ALICE)
+    client.post("/whitelist", json={"entry": "www.youtube.com"}, headers={**_ALICE, **_PIN})
     alice = client.get("/whitelist", headers=_ALICE).json()["entries"]
     bob = client.get("/whitelist", headers=_BOB).json()["entries"]
     assert {"value": "www.youtube.com", "type": "exact"} in alice
@@ -1729,7 +1753,7 @@ def test_registry_path_builds_isolated_profiles(tmp_path: Path) -> None:
     )
     client = TestClient(app)
 
-    add = client.post("/whitelist", json={"entry": "www.youtube.com"}, headers=_ALICE)
+    add = client.post("/whitelist", json={"entry": "www.youtube.com"}, headers={**_ALICE, **_PIN})
     assert add.status_code == 200
     alice = client.post(
         "/classify", json={"url": "https://www.youtube.com/"}, headers=_ALICE
