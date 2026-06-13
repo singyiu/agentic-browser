@@ -20,6 +20,12 @@ from agent_backend.guardian.verdict import Verdict
 from .test_service import _PIN, FakeClassifier, _client, _pm_client
 
 
+def _ext_version() -> str:
+    """Read the current extension version straight from the manifest the endpoint reads."""
+    manifest = Path(__file__).resolve().parents[4] / "extension" / "manifest.json"
+    return json.loads(manifest.read_text())["version"]
+
+
 def _ok_classifier() -> FakeClassifier:
     return FakeClassifier(Verdict("allow"))
 
@@ -41,7 +47,7 @@ def test_version_returns_all_fields() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["guardian"] == BACKEND_VERSION
-    assert data["extension"] == "0.2.6"
+    assert data["extension"] == _ext_version()
     assert data["grafana"] == {"lgtm": "0.11.6", "alloy": "v1.10.0"}
     assert data["model"] == DEFAULT_AGENT_MODEL
 
