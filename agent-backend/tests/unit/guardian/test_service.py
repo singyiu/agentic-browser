@@ -810,6 +810,20 @@ def test_home_page_contains_shell_markup() -> None:
     assert b"app-shell" in resp.content
 
 
+def test_html_responses_carry_security_headers() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    # Clickjacking defense: nothing may frame the dashboard. (Embedding Grafana
+    # via iframe SRC inside the dashboard is unaffected — that is frame-src.)
+    assert resp.headers["content-security-policy"] == "frame-ancestors 'self'"
+
+
+def test_json_responses_nosniff_but_no_csp() -> None:
+    resp = _client(FakeClassifier(Verdict("allow"))).get("/health")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert "content-security-policy" not in resp.headers
+
+
 # --- review page (now redirects into the shell) ---
 
 
@@ -3039,6 +3053,15 @@ def test_dist_browser_served_without_token(tmp_path: Path) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("application/zip")
     assert resp.content.startswith(b"PK")
+
+
+def test_dist_browser_range_requests_survive_middleware(tmp_path: Path) -> None:
+    # The kid installer resumes downloads with Range requests; the security-headers
+    # middleware must not buffer or break FileResponse streaming (hence pure ASGI).
+    (tmp_path / "browser.zip").write_bytes(b"PK\x03\x04zip-payload")
+    resp = _ext_client(tmp_path).get("/dist/browser.zip", headers={"Range": "bytes=0-3"})
+    assert resp.status_code == 206
+    assert resp.content == b"PK\x03\x04"
 
 
 def test_dist_kid_updater_served(tmp_path: Path) -> None:

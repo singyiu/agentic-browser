@@ -19,10 +19,12 @@ from pathlib import Path
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .. import __version__ as _BACKEND_VERSION
 from ..config import ConfigError
@@ -131,6 +133,33 @@ def _is_loopback_client(request: Request) -> bool:
     """True when the TCP peer is this machine — the first-run setup trust anchor."""
     host = request.client.host if request.client else ""
     return host in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+
+class _SecurityHeadersMiddleware:
+    """Add security headers as pure ASGI (no buffering — /dist/browser.zip streams 45MB).
+
+    ``X-Content-Type-Options: nosniff`` on every response; ``frame-ancestors 'self'``
+    only on HTML (clickjacking defense for the dashboard/setup pages — embedding
+    Grafana via iframe SRC inside our pages is frame-src and stays unaffected).
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["X-Content-Type-Options"] = "nosniff"
+                if headers.get("content-type", "").startswith("text/html"):
+                    headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+            await send(message)
+
+        await self._app(scope, receive, send_with_headers)
 
 
 def _clamp_request_minutes(value: object) -> int | None:
@@ -3203,6 +3232,7 @@ def create_app(
             ),
         ]
     )
+    app.add_middleware(_SecurityHeadersMiddleware)
     # Seed the per-profile balance gauges so the 14-day prize-points line is continuous from
     # startup (not just from the first grant/redeem of this process).
     for _rt in _pm.snapshot().values():
