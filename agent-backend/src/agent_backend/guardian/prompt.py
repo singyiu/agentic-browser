@@ -17,6 +17,8 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from .fsio import atomic_write_text
+
 # Age bands for the seeded default per-profile guidance (parents edit freely afterward).
 _AGE_VERY_STRICT = 7
 _AGE_STRICT = 12
@@ -55,8 +57,7 @@ class PromptStore:
             return ""
 
     def _write(self, text: str) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(text, encoding="utf-8")
+        atomic_write_text(self._path, text)
 
     @property
     def mtime(self) -> float | None:

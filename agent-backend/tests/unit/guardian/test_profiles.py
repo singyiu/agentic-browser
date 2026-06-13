@@ -298,7 +298,7 @@ def test_save_profiles_atomic_keeps_original_on_replace_failure(
     def boom(*_args: object, **_kwargs: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("agent_backend.guardian.profiles.os.replace", boom)
+    monkeypatch.setattr("agent_backend.guardian.fsio.os.replace", boom)
     with pytest.raises(OSError):
         save_profiles(
             (

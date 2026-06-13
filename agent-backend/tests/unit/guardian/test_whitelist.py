@@ -154,6 +154,8 @@ def test_store_add_persists_and_dedupes(tmp_path: Path) -> None:
     store.add("www.youtube.com")  # idempotent
     assert store.current().values == ("www.youtube.com",)
     assert json.loads(p.read_text()) == ["www.youtube.com"]
+    # Writes are atomic (temp + replace) and clean up after themselves.
+    assert not (tmp_path / "wl.json.tmp").exists()
 
 
 def test_store_add_strips_entry(tmp_path: Path) -> None:

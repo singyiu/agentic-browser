@@ -14,6 +14,8 @@ import threading
 from collections.abc import Iterable
 from pathlib import Path
 
+from .fsio import atomic_write_text
+
 
 class KeywordList:
     """Immutable snapshot of keyword entries; rebuilt (never mutated) on reload."""
@@ -83,8 +85,7 @@ class KeywordStore:
         return _coerce_entries(data)
 
     def _write(self, values: list[str]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(values, indent=2))
+        atomic_write_text(self._path, json.dumps(values, indent=2))
 
     def current(self) -> KeywordList:
         return self._current

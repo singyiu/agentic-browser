@@ -235,6 +235,8 @@ def test_store_set_persists_and_reloads(tmp_path: Path) -> None:
     assert TimePolicyStore(str(p)).current().daily_minutes == {"default": 45}
     # on-disk JSON is the serialized shape
     assert json.loads(p.read_text())["daily_minutes"] == {"default": 45}
+    # Writes are atomic (temp + replace) and clean up after themselves.
+    assert not (tmp_path / "tp.json.tmp").exists()
 
 
 def test_store_hot_reloads_on_external_change(tmp_path: Path) -> None:

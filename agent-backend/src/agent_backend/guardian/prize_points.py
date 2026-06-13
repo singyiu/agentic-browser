@@ -17,12 +17,12 @@ restarts and Prometheus counter resets for free.
 from __future__ import annotations
 
 import json
-import os
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
 from .event_log import EventLog
+from .fsio import atomic_write_text
 
 # --- redemption policy (fixed; see the plan's locked decisions) ---------------
 
@@ -73,14 +73,7 @@ class PrizePointStore:
         return max(0, value)
 
     def _write(self, balance: int) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.parent / f"{self._path.name}.tmp"
-        tmp.write_text(json.dumps({"balance": balance}, indent=2))
-        try:
-            os.replace(tmp, self._path)
-        except OSError:
-            tmp.unlink(missing_ok=True)
-            raise
+        atomic_write_text(self._path, json.dumps({"balance": balance}, indent=2))
 
     def balance(self) -> int:
         with self._lock:

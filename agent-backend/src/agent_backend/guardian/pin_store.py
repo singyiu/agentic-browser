@@ -14,11 +14,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import os
 import secrets
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
+
+from .fsio import atomic_write_text
 
 _HASH_NAME = "sha256"
 _ALGO = f"pbkdf2_{_HASH_NAME}"
@@ -101,7 +102,4 @@ class PinStore:
             self._write(record)
 
     def _write(self, record: dict[str, object]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_name(self._path.name + ".tmp")
-        tmp.write_text(json.dumps(record, indent=2))
-        os.replace(tmp, self._path)  # atomic on POSIX; readers never see a partial file
+        atomic_write_text(self._path, json.dumps(record, indent=2))

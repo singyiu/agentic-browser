@@ -13,7 +13,6 @@ single ``"default"`` profile on the legacy paths, byte-identical to the single-m
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -21,6 +20,7 @@ from pathlib import Path
 
 from ..config import ConfigError
 from .config import DEFAULT_AGE, MAX_AGE, MIN_AGE
+from .fsio import atomic_write_text
 
 DEFAULT_PROFILE_NAME = "default"
 # The shared all-kids profile: no token, no browser. Its allow/block rules are layered
@@ -133,15 +133,8 @@ def save_profiles(profiles: Iterable[Profile], path: str) -> None:
     mirrors what :func:`load_profiles` reads, so the two round-trip exactly.
     """
     target = Path(path).expanduser()
-    target.parent.mkdir(parents=True, exist_ok=True)
     payload = [_profile_to_dict(p) for p in profiles]
-    tmp = target.parent / f"{target.name}.tmp"
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    try:
-        os.replace(tmp, target)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
+    atomic_write_text(target, json.dumps(payload, indent=2))
 
 
 def _profile_to_dict(profile: Profile) -> dict[str, object]:

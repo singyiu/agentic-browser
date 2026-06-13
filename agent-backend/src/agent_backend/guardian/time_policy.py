@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .fsio import atomic_write_text
 from .whitelist import canonicalize_url
 
 WEEKDAYS: tuple[str, ...] = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -357,8 +358,7 @@ class TimePolicyStore:
         return _coerce_stored(data)
 
     def _write(self, policy: TimePolicy) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(to_json(policy), indent=2))
+        atomic_write_text(self._path, json.dumps(to_json(policy), indent=2))
 
     def current(self) -> TimePolicy:
         with self._lock:

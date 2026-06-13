@@ -17,6 +17,8 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .fsio import atomic_write_text
+
 # A request targets either the general pool (target_host=None) or a specific site.
 GENERAL_TARGET = None
 
@@ -109,8 +111,7 @@ class TimeRequestStore:
         return tuple(r for r in parsed if r is not None)
 
     def _write(self, requests: Iterable[TimeRequest]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps([asdict(r) for r in requests], indent=2))
+        atomic_write_text(self._path, json.dumps([asdict(r) for r in requests], indent=2))
 
     def current(self) -> TimeRequestSnapshot:
         return self._current

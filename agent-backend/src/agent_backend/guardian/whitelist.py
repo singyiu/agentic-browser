@@ -19,6 +19,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
 
+from .fsio import atomic_write_text
+
 EntryType = Literal["exact", "wildcard", "content"]
 
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.\-]*://")
@@ -139,8 +141,7 @@ class WhitelistStore:
         return _coerce_entries(data)
 
     def _write(self, values: list[str]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(values, indent=2))
+        atomic_write_text(self._path, json.dumps(values, indent=2))
 
     def current(self) -> Whitelist:
         return self._current
