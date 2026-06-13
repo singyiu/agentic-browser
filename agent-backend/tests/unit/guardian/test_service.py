@@ -45,6 +45,7 @@ def _config(
     parent_pin: str = "testpin",
     admin_path: str = ":memory:",
     tmp_dir: Path | None = None,
+    classify_fail_mode: str = "open",
 ) -> GuardianConfig:
     # Unique per call: shared fixed paths (the old /tmp/guardian_test*.jsonl) make
     # parallel test runs stomp each other's event logs.
@@ -68,6 +69,7 @@ def _config(
         config_dir=str(base),
         oauth_token="t",
         admin_path=admin_path,
+        classify_fail_mode=classify_fail_mode,
     )
 
 
@@ -174,6 +176,7 @@ def _client(
     summary_log: object = None,
     metrics: object = None,
     client_addr: tuple[str, int] = ("127.0.0.1", 0),
+    classify_fail_mode: str = "open",
 ) -> TestClient:
     kwargs: dict[str, object] = {}
     if whitelist is not None:
@@ -185,7 +188,9 @@ def _client(
     if metrics is not None:
         kwargs["metrics"] = metrics
     app = create_app(
-        _config(parent_pin=parent_pin, admin_path=admin_path),
+        _config(
+            parent_pin=parent_pin, admin_path=admin_path, classify_fail_mode=classify_fail_mode
+        ),
         classifier=classifier,
         cache=cache or FakeCache(),
         event_log=log or FakeLog(),
@@ -241,6 +246,35 @@ def test_fail_open_on_classifier_error() -> None:
     )
     assert resp.json()["verdict"] == "allow"
     assert "fail_open" in log.events
+
+
+def test_fail_closed_on_classifier_error_when_configured() -> None:
+    log = FakeLog()
+    resp = _client(FakeClassifier(RuntimeError("boom")), log=log, classify_fail_mode="closed").post(
+        "/classify", json={"url": "http://x"}, headers=_HEADERS
+    )
+    assert resp.json()["verdict"] == "block"
+    assert resp.json()["reason"] == "classification_unavailable"
+    assert "fail_closed" in log.events
+    assert "fail_open" not in log.events
+
+
+def test_search_fail_closed_when_configured() -> None:
+    log = FakeLog()
+    resp = _client(FakeClassifier(RuntimeError("boom")), log=log, classify_fail_mode="closed").post(
+        "/search-classify", json={"query": "anything"}, headers=_HEADERS
+    )
+    assert resp.json()["verdict"] == "block"
+    assert "search_fail_closed" in log.events
+
+
+def test_search_fail_open_default() -> None:
+    log = FakeLog()
+    resp = _client(FakeClassifier(RuntimeError("boom")), log=log).post(
+        "/search-classify", json={"query": "anything"}, headers=_HEADERS
+    )
+    assert resp.json()["verdict"] == "allow"
+    assert "search_fail_open" in log.events
 
 
 def test_low_confidence_escalates_to_screenshot() -> None:

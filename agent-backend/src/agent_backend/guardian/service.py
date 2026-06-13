@@ -1114,14 +1114,22 @@ def create_app(
                 ),
                 timeout=config.classify_timeout_s,
             )
-        except Exception as exc:  # noqa: BLE001 - fail-open on timeout or any error
+        except Exception as exc:  # noqa: BLE001 - verdict on error is config.classify_fail_mode
+            mode = config.classify_fail_mode
             event_log.log(
-                "fail_open", url=url, url_key=url_key, reason=type(exc).__name__, profile=rt.name
+                f"fail_{mode}", url=url, url_key=url_key, reason=type(exc).__name__, profile=rt.name
             )
             metrics.record_fail_open(host)
+            failure_verdict = "block" if mode == "closed" else "allow"
             return JSONResponse(
                 _response(
-                    "allow", "classification_unavailable", 0.0, [], url_key, False, _ms(start)
+                    failure_verdict,
+                    "classification_unavailable",
+                    0.0,
+                    [],
+                    url_key,
+                    False,
+                    _ms(start),
                 )
             )
 
@@ -1237,9 +1245,13 @@ def create_app(
                 ),
                 timeout=config.classify_timeout_s,
             )
-        except Exception as exc:  # noqa: BLE001 - fail-open on timeout or any error
-            event_log.log("search_fail_open", reason=type(exc).__name__, profile=rt.name)
-            return JSONResponse({"verdict": "allow", "reason": "classification_unavailable"})
+        except Exception as exc:  # noqa: BLE001 - verdict on error is config.classify_fail_mode
+            mode = config.classify_fail_mode
+            event_log.log(f"search_fail_{mode}", reason=type(exc).__name__, profile=rt.name)
+            failure_verdict = "block" if mode == "closed" else "allow"
+            return JSONResponse(
+                {"verdict": failure_verdict, "reason": "classification_unavailable"}
+            )
 
         await loop.run_in_executor(
             None, rt.cache.put, cache_key, verdict.verdict, verdict.reason, verdict.confidence

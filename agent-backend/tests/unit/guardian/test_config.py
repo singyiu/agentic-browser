@@ -71,6 +71,20 @@ def test_overrides() -> None:
     assert cfg.enable_vision is True
 
 
+def test_classify_fail_mode_defaults_open() -> None:
+    assert GuardianConfig.from_env(_env()).classify_fail_mode == "open"
+
+
+def test_classify_fail_mode_closed() -> None:
+    cfg = GuardianConfig.from_env(_env(GUARDIAN_CLASSIFY_FAIL_MODE="closed"))
+    assert cfg.classify_fail_mode == "closed"
+
+
+def test_classify_fail_mode_rejects_unknown() -> None:
+    with pytest.raises(ConfigError, match="GUARDIAN_CLASSIFY_FAIL_MODE"):
+        GuardianConfig.from_env(_env(GUARDIAN_CLASSIFY_FAIL_MODE="maybe"))
+
+
 def test_whitelist_path_override() -> None:
     cfg = GuardianConfig.from_env(_env(GUARDIAN_WHITELIST_PATH="/tmp/wl.json"))
     assert cfg.whitelist_path == "/tmp/wl.json"

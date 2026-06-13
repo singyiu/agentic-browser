@@ -35,6 +35,11 @@ DEFAULT_PRIZE_DAILY_BONUS_CAP_MIN = 120
 # Directory holding the packed extension CRX + update manifest (written by
 # scripts/pack-extension.sh) that the kid browser force-installs via policy.
 DEFAULT_EXT_DIST_DIR = ".chromium-dist"
+# What /classify and /search-classify answer when the classifier errors or times out:
+# "open" allows the page (no false blocks during guardian hiccups), "closed" blocks it
+# (strictest: nothing unclassified gets through). Per-household choice.
+CLASSIFY_FAIL_MODES = frozenset({"open", "closed"})
+DEFAULT_CLASSIFY_FAIL_MODE = "open"
 
 
 def _clean(value: str | None) -> str:
@@ -83,6 +88,8 @@ class GuardianConfig:
     # config proposals). Defaults to a stronger model than the per-page classifier (``model``),
     # which stays on the fast/cheap tier. Override with GUARDIAN_AGENT_MODEL.
     agent_model: str = DEFAULT_AGENT_MODEL
+    # Verdict when the classifier errors/times out: "open" allows, "closed" blocks.
+    classify_fail_mode: str = DEFAULT_CLASSIFY_FAIL_MODE
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> GuardianConfig:
@@ -105,6 +112,13 @@ class GuardianConfig:
         metrics_port = int(_clean(e.get("GUARDIAN_METRICS_PORT")) or DEFAULT_METRICS_PORT)
         if not 1024 <= metrics_port <= 65535:
             raise ConfigError("GUARDIAN_METRICS_PORT must be between 1024 and 65535.")
+        fail_mode = (
+            _clean(e.get("GUARDIAN_CLASSIFY_FAIL_MODE")).lower() or DEFAULT_CLASSIFY_FAIL_MODE
+        )
+        if fail_mode not in CLASSIFY_FAIL_MODES:
+            raise ConfigError(
+                f"GUARDIAN_CLASSIFY_FAIL_MODE must be 'open' or 'closed', got {fail_mode!r}."
+            )
         return cls(
             host=_clean(e.get("GUARDIAN_HOST")) or DEFAULT_HOST,
             port=int(_clean(e.get("GUARDIAN_PORT")) or DEFAULT_PORT),
@@ -148,4 +162,5 @@ class GuardianConfig:
             agent_model=_clean(e.get("GUARDIAN_AGENT_MODEL")) or DEFAULT_AGENT_MODEL,
             config_dir=config_dir,
             oauth_token=oauth,
+            classify_fail_mode=fail_mode,
         )
