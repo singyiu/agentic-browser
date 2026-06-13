@@ -3,6 +3,7 @@
 Extension and browser distribution endpoints — intentionally unauthenticated (Chrome's
 extension updater and the kid bootstrapper can't present a token).
 """
+
 from __future__ import annotations
 
 import asyncio

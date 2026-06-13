@@ -1,4 +1,5 @@
 """Routes: /profiles, /profiles/{name}/rename, /profiles/{name}/token, /profiles/{name}."""
+
 from __future__ import annotations
 
 import asyncio
@@ -43,9 +44,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
             return JSONResponse({"error": "invalid JSON body"}, status_code=422)
         loop = asyncio.get_running_loop()
         try:
-            runtime, token = await loop.run_in_executor(
-                None, pm.create, str(body.get("name", ""))
-            )
+            runtime, token = await loop.run_in_executor(None, pm.create, str(body.get("name", "")))
         except InvalidProfileNameError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)
         except ProfileExistsError:

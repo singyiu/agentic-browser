@@ -1,4 +1,5 @@
 """Routes: GET /, GET /setup, GET /setup/status, POST /setup/pin, GET /setup/health, GET /review."""
+
 from __future__ import annotations
 
 import asyncio

@@ -4,6 +4,7 @@ Extracted from service.py.  Both handlers are token-gated (kid extension uses
 ``X-Guardian-Token``).  Helpers ``_ms`` and ``_response`` live here because they
 are only needed by these two endpoints.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -281,9 +282,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
             )
         except Exception as exc:  # noqa: BLE001 - verdict on error is config.classify_fail_mode
             mode = deps.config.classify_fail_mode
-            deps.event_log.log(
-                f"search_fail_{mode}", reason=type(exc).__name__, profile=rt.name
-            )
+            deps.event_log.log(f"search_fail_{mode}", reason=type(exc).__name__, profile=rt.name)
             failure_verdict = "block" if mode == "closed" else "allow"
             return JSONResponse(
                 {"verdict": failure_verdict, "reason": "classification_unavailable"}
@@ -301,9 +300,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
         deps.event_log.log(
             "search_classify", query_len=len(query), verdict=verdict.verdict, profile=rt.name
         )
-        return JSONResponse(
-            {"verdict": verdict.verdict, "reason": verdict.reason, "cached": False}
-        )
+        return JSONResponse({"verdict": verdict.verdict, "reason": verdict.reason, "cached": False})
 
     return [
         Route("/classify", classify, methods=["POST"]),

@@ -4,6 +4,7 @@ Module-level helpers (constants, parsers, prompt builders) are pure functions so
 tested without a live app; route handlers are closures over ``GuardianDeps`` returned by
 ``build_routes()``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -319,9 +320,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
 
     async def _clear_caches_after_list_change(rt: ProfileRuntime) -> None:
         loop = asyncio.get_running_loop()
-        targets = (
-            list(deps.pm.snapshot().values()) if rt.name == GLOBAL_PROFILE_NAME else [rt]
-        )
+        targets = list(deps.pm.snapshot().values()) if rt.name == GLOBAL_PROFILE_NAME else [rt]
         for target in targets:
             await loop.run_in_executor(None, target.cache.clear)
 
@@ -414,9 +413,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
         event_log.log("agent_prompt_set", profile=rt.name, length=len(prompt))
         return {"profile": rt.name, "length": len(prompt)}
 
-    async def _apply_time_policy_set(
-        profile_str: str, params: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _apply_time_policy_set(profile_str: str, params: dict[str, Any]) -> dict[str, Any]:
         text = str(params.get("text", "")).strip()
         if not text or len(text) > _MAX_TIME_TEXT:
             raise _AgentApplyError(422, f"text required (max {_MAX_TIME_TEXT} chars)")

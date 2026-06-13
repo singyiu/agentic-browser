@@ -3,6 +3,7 @@
 
 All endpoints are PIN-gated parent-only views and writes over per-profile stores.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -69,9 +70,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
         # just that teen's. (Hard URL rules are checked before the cache, so this matters
         # mainly for natural-language topic edits, which only the AI path consults.)
         loop = asyncio.get_running_loop()
-        targets = (
-            list(deps.pm.snapshot().values()) if rt.name == GLOBAL_PROFILE_NAME else [rt]
-        )
+        targets = list(deps.pm.snapshot().values()) if rt.name == GLOBAL_PROFILE_NAME else [rt]
         for target in targets:
             await loop.run_in_executor(None, target.cache.clear)
 

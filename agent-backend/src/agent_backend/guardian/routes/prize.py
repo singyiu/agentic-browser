@@ -2,6 +2,7 @@
 
 Covers teen-facing balance/redeem and parent-facing grant/events endpoints.
 """
+
 from __future__ import annotations
 
 import asyncio

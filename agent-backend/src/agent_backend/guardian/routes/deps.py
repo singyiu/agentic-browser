@@ -5,6 +5,7 @@ handlers need.  Each route module's ``build_routes(deps)`` defines its handlers
 as closures capturing ``deps``, mirroring the original closure-inside-create_app
 pattern but decoupled from the monolithic ``service.py`` scope.
 """
+
 from __future__ import annotations
 
 import hmac

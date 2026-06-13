@@ -9,6 +9,7 @@ Covers:
   GET  PUT /time/policy
   POST /time/policy/parse
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -60,9 +61,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
         # A Global edit affects every teen, so clear all teen caches; a per-teen edit clears
         # just that teen's.
         loop = asyncio.get_running_loop()
-        targets = (
-            list(deps.pm.snapshot().values()) if rt.name == GLOBAL_PROFILE_NAME else [rt]
-        )
+        targets = list(deps.pm.snapshot().values()) if rt.name == GLOBAL_PROFILE_NAME else [rt]
         for target in targets:
             await loop.run_in_executor(None, target.cache.clear)
 
@@ -128,9 +127,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
                         entry=entry,
                     )
                 except OSError:
-                    event_log.log(
-                        "hard_block_skipped", reason="write_failed", profile=target.name
-                    )
+                    event_log.log("hard_block_skipped", reason="write_failed", profile=target.name)
             else:
                 event_log.log("hard_block_skipped", reason="no_target", profile=target.name)
         if applied_rule or applied_hard:
@@ -148,9 +145,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
         for runtime in deps.pm.snapshot().values():
             snapshot = runtime.request_store.current()
             pending.extend({**asdict(r), "profile": runtime.name} for r in snapshot.pending())
-            recent.extend(
-                {**asdict(r), "profile": runtime.name} for r in snapshot.recent_decided()
-            )
+            recent.extend({**asdict(r), "profile": runtime.name} for r in snapshot.recent_decided())
         pending.sort(key=lambda r: r["created_ts"])
         recent.sort(key=lambda r: r.get("decided_ts") or "", reverse=True)
         return JSONResponse({"pending": pending, "recent": recent[:50]})
@@ -273,9 +268,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
                 await loop.run_in_executor(None, owner.cache.clear)  # an allow invalidates a block
             except OSError:
                 return JSONResponse({"error": "whitelist write failed"}, status_code=500)
-            event_log.log(
-                "access_request_approved", id=request_id, entry=entry, profile=owner.name
-            )
+            event_log.log("access_request_approved", id=request_id, entry=entry, profile=owner.name)
             metrics.record_access_decision("approve")
             return JSONResponse({"id": decided.id, "status": decided.status})
         event_log.log("access_request_rejected", id=request_id, profile=owner.name)
@@ -432,9 +425,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
             )
         try:
             raw = await asyncio.wait_for(
-                classifier.generate(
-                    system_prompt=_TIME_POLICY_SYSTEM_PROMPT, user_prompt=text
-                ),
+                classifier.generate(system_prompt=_TIME_POLICY_SYSTEM_PROMPT, user_prompt=text),
                 timeout=config.classify_timeout_s,
             )
         except Exception:  # noqa: BLE001
