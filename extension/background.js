@@ -5,6 +5,7 @@
 import { getConfig } from "./guardian-client.js";
 import {
   ensureTiming,
+  flush,
   flushPartial,
   handleActivated,
   handleFocusChanged,
@@ -31,6 +32,12 @@ const HOT_TTL_MS = 5 * 60 * 1000;
 const TIMEOUT_MS = 185000; // wait out the backend classify budget (>= GUARDIAN_CLASSIFY_TIMEOUT)
 
 const hotCache = new Map(); // rawUrl -> { verdict, reason, ts }
+
+// Per-tab navigation tracking. onCommitted and onHistoryStateUpdated both fire for SPA
+// navigations, so two handleNavigation runs can be in flight for one tab: dedupe the
+// same-URL duplicate outright, and give each run a sequence number so a slow classify
+// for an ABANDONED navigation can never block the page the kid has since moved on to.
+const tabNav = new Map(); // tabId -> { url, seq, settled }
 
 function shouldSkip(url) {
   return !url || HARD_ALLOW.some((re) => re.test(url));
@@ -300,24 +307,57 @@ async function timeHeartbeat() {
   updateActionBadge(state);
   if (state.blocked) {
     await blockTab(tab.id, timeReason(state), tab.url, { kind: "timelimit" });
+    // flushPartial above already banked this interval; just stop the clock so the
+    // blocked URL stops accruing time while the kid sits on the block page.
+    await pauseTiming();
   }
+}
+
+// Block the tab and stop the dwell clock, banking the segment that just ended (the
+// previous page, or this page's viewing time before the verdict landed). The block page
+// is skip-listed, so without the flush the clock would keep draining the budget against
+// the blocked URL for as long as the kid sits on the block page.
+async function blockAndStopClock(tabId, reason, url, opts) {
+  await flush();
+  await blockTab(tabId, reason, url, opts);
 }
 
 async function handleNavigation(tabId, url) {
   if (shouldSkip(url)) return;
+  const prev = tabNav.get(tabId);
+  // onCommitted + onHistoryStateUpdated double-fire for one navigation: run it once.
+  if (prev && !prev.settled && prev.url === url) return;
+  const seq = (prev?.seq ?? 0) + 1;
+  tabNav.set(tabId, { url, seq, settled: false });
+  // A newer navigation in this tab supersedes us: stop acting (never block the new page).
+  const isCurrent = () => tabNav.get(tabId)?.seq === seq;
+  try {
+    await handleNavigationInner(tabId, url, isCurrent);
+  } finally {
+    if (isCurrent()) tabNav.set(tabId, { url, seq, settled: true });
+  }
+}
+
+async function handleNavigationInner(tabId, url, isCurrent) {
   console.log(`[guardian] nav tab=${tabId} url=${url}`);
-  notifyUrlKey(tabId, url); // (re)start dwell timing for the active page
 
   // Screen-time gate (server-authoritative): block when the budget is spent or during a bedtime
   // window. Excluded/educational hosts come back blocked=false, so they stay usable.
   const tState = await timeState(url);
+  if (!isCurrent()) return;
   if (tState) {
     updateActionBadge(tState);
     if (tState.blocked) {
-      await blockTab(tabId, timeReason(tState), url, { kind: "timelimit" });
+      await blockAndStopClock(tabId, timeReason(tState), url, {
+        kind: "timelimit",
+      });
       return;
     }
   }
+
+  // Start dwell timing only after the time gate: an instantly-blocked page must not
+  // earn dwell credit. Awaited so concurrent navigations can't double-flush a segment.
+  await notifyUrlKey(tabId, url);
 
   // Search-keyword gate: when this navigation is a search, judge the QUERY first. A blocked
   // query goes straight to the search-mode block page; an allowed query falls through to the
@@ -331,18 +371,23 @@ async function handleNavigation(tabId, url) {
       sc = { verdict: result.verdict, reason: result.reason, ts: Date.now() };
       hotCache.set(searchKey, sc);
     }
+    if (!isCurrent()) return;
     if (sc.verdict === "block") {
-      await blockTab(tabId, sc.reason || "This search isn't allowed.", url, {
-        kind: "search",
-        query: searchQuery,
-      });
+      await blockAndStopClock(
+        tabId,
+        sc.reason || "This search isn't allowed.",
+        url,
+        { kind: "search", query: searchQuery },
+      );
       return;
     }
   }
 
   const cached = hotCache.get(url);
   if (cached && Date.now() - cached.ts < HOT_TTL_MS) {
-    if (cached.verdict === "block") await blockTab(tabId, cached.reason, url);
+    if (cached.verdict === "block" && isCurrent()) {
+      await blockAndStopClock(tabId, cached.reason, url);
+    }
     return;
   }
 
@@ -351,7 +396,7 @@ async function handleNavigation(tabId, url) {
 
   let result = await classify({ ...content, url, can_escalate: true });
 
-  if (result.verdict === "need_screenshot") {
+  if (result.verdict === "need_screenshot" && isCurrent()) {
     const screenshot = await captureScreenshot(tabId);
     if (screenshot) {
       result = await classify({
@@ -366,6 +411,7 @@ async function handleNavigation(tabId, url) {
     }
   }
 
+  // The verdict describes the URL, not the tab — cache it even if the tab moved on.
   hotCache.set(url, {
     verdict: result.verdict,
     reason: result.reason,
@@ -374,8 +420,12 @@ async function handleNavigation(tabId, url) {
   console.log(
     `[guardian] verdict=${result.verdict} reason=${result.reason || ""} url=${url}`,
   );
-  if (result.verdict === "block") {
-    await blockTab(tabId, result.reason || "This page is not suitable.", url);
+  if (result.verdict === "block" && isCurrent()) {
+    await blockAndStopClock(
+      tabId,
+      result.reason || "This page is not suitable.",
+      url,
+    );
   }
 }
 
@@ -431,7 +481,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Dwell-time tracking: time-on-page per active/focused tab, reported to the backend.
 chrome.tabs.onActivated.addListener((info) => handleActivated(info.tabId));
-chrome.tabs.onRemoved.addListener((tabId) => handleRemoved(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tabNav.delete(tabId);
+  handleRemoved(tabId);
+});
 chrome.windows.onFocusChanged.addListener((winId) => handleFocusChanged(winId));
 chrome.alarms.create("guardian-dwell-keepalive", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm) => {

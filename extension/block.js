@@ -1,4 +1,7 @@
 // Populate the block page from query params (MV3 extension pages disallow inline JS).
+// Runs as an ES module so the guardian config loader is shared with the service worker.
+import { getConfig } from "./guardian-client.js";
+
 const params = new URLSearchParams(location.search);
 const reason = params.get("reason");
 const blockedUrl = params.get("url");
@@ -31,21 +34,6 @@ if (isTime) {
   }
 }
 document.getElementById("back").addEventListener("click", () => history.back());
-
-// Inline guardian config loader. block.html is an extension page, so it may read the
-// bundled, web-accessible config (token + endpoint); arbitrary web pages cannot. Kept
-// inline (block.js is a plain script, not a module) to avoid a module/CSP change.
-let CONFIG = null;
-async function getConfig() {
-  if (CONFIG) return CONFIG;
-  try {
-    const resp = await fetch(chrome.runtime.getURL("guardian-config.json"));
-    CONFIG = await resp.json();
-  } catch (_e) {
-    CONFIG = { token: "", endpoint: "http://127.0.0.1:2947" };
-  }
-  return CONFIG;
-}
 
 const noteEl = document.getElementById("note");
 const requestBtn = document.getElementById("request-btn");

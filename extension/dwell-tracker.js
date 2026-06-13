@@ -26,7 +26,10 @@ async function clearCurrent() {
   await chrome.storage.session.remove(CURRENT_KEY);
 }
 
-async function flush() {
+// Exported so the service worker can bank-and-stop the clock when it blocks a tab:
+// the block page is skip-listed, so no later navigation event would ever end the
+// segment — without this, time kept draining against the blocked URL.
+export async function flush() {
   const cur = await getCurrent();
   await clearCurrent();
   if (cur && cur.urlKey && cur.since) {

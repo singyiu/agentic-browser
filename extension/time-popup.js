@@ -1,21 +1,11 @@
 // Toolbar-button popup: shows the kid's remaining general screen-time, per-site credits for the
 // current tab, and a "Request more time" action. An extension page, so it may read the bundled
 // guardian config and call the backend directly (host permissions; no CORS), like block.js.
+// Runs as an ES module so the guardian config loader is shared with the service worker.
+
+import { getConfig } from "./guardian-client.js";
 
 const $ = (id) => document.getElementById(id);
-
-let CONFIG = null;
-async function getConfig() {
-  if (CONFIG) return CONFIG;
-  try {
-    CONFIG = await (
-      await fetch(chrome.runtime.getURL("guardian-config.json"))
-    ).json();
-  } catch (_e) {
-    CONFIG = { token: "", endpoint: "http://127.0.0.1:2947" };
-  }
-  return CONFIG;
-}
 
 function fmtMin(ms) {
   const m = Math.max(0, Math.round((ms || 0) / 60000));

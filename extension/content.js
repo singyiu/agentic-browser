@@ -14,7 +14,10 @@ function extractContent() {
     body = "";
   }
 
-  const data = {
+  // NOTE: no page-variable enrichment (e.g. window.ytInitialData) — MV3 content scripts
+  // run in an isolated world where page JS globals are never visible, so YouTube pages
+  // are described by their og: tags, title, and body text like any other site.
+  return {
     url: location.href,
     title: document.title || "",
     meta_desc: meta('meta[name="description"]'),
@@ -22,38 +25,6 @@ function extractContent() {
     og_desc: meta('meta[property="og:description"]'),
     body_snippet: body,
   };
-
-  // YouTube enrichment (best-effort; falls back to og tags / title above).
-  try {
-    if (location.hostname.endsWith("youtube.com") && window.ytInitialData) {
-      const contents =
-        window.ytInitialData?.contents?.twoColumnWatchNextResults?.results
-          ?.results?.contents;
-      if (Array.isArray(contents)) {
-        const primary = contents.find(
-          (c) => c.videoPrimaryInfoRenderer,
-        )?.videoPrimaryInfoRenderer;
-        const secondary = contents.find(
-          (c) => c.videoSecondaryInfoRenderer,
-        )?.videoSecondaryInfoRenderer;
-        const title = primary?.title?.runs?.[0]?.text;
-        const channel =
-          secondary?.owner?.videoOwnerRenderer?.title?.runs?.[0]?.text;
-        const desc =
-          secondary?.attributedDescription?.content ||
-          secondary?.description?.runs?.map((r) => r.text).join("") ||
-          "";
-        if (title) data.title = title;
-        if (channel) data.og_title = `Channel: ${channel}`;
-        if (desc)
-          data.body_snippet = `${desc} ${data.body_snippet}`.slice(0, 2000);
-      }
-    }
-  } catch (_e) {
-    /* ignore enrichment errors */
-  }
-
-  return data;
 }
 
 let overlayEl = null;
@@ -156,9 +127,24 @@ function navigateToBlockPage(reason, query) {
   );
 }
 
+// One pending classification per query: a rapid double-Enter (or double-click on Send)
+// arrives before the first check resolves, passes the _replaying guard (still false),
+// and would submit twice. Both events now share the same in-flight promise instead.
+const _inflight = new Map(); // query -> Promise<void>
+
 // Ask the SW to classify the query, then either block or replay the held action. Fail-open: any
 // error (or a missing verdict) replays the action so an allowed search is never broken.
-async function guardThenReplay(query, replay) {
+function guardThenReplay(query, replay) {
+  const pending = _inflight.get(query);
+  if (pending) return pending; // duplicate submit while the check is pending — replay once
+  const run = guardThenReplayOnce(query, replay).finally(() =>
+    _inflight.delete(query),
+  );
+  _inflight.set(query, run);
+  return run;
+}
+
+async function guardThenReplayOnce(query, replay) {
   let result = null;
   try {
     result = await chrome.runtime.sendMessage({
