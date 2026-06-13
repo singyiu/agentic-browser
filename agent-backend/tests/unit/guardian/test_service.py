@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -40,15 +41,22 @@ _PIN = {"X-Guardian-Parent-Pin": "testpin"}
 _HEADERS = {"X-Guardian-Token": "secret"}
 
 
-def _config(parent_pin: str = "testpin", admin_path: str = ":memory:") -> GuardianConfig:
+def _config(
+    parent_pin: str = "testpin",
+    admin_path: str = ":memory:",
+    tmp_dir: Path | None = None,
+) -> GuardianConfig:
+    # Unique per call: shared fixed paths (the old /tmp/guardian_test*.jsonl) make
+    # parallel test runs stomp each other's event logs.
+    base = tmp_dir or Path(tempfile.mkdtemp(prefix="aegis-guardian-test-"))
     return GuardianConfig(
         host="127.0.0.1",
         port=2947,
         metrics_port=2948,
         token="secret",
         cache_path=":memory:",
-        event_log_path="/tmp/guardian_test.jsonl",
-        summary_log_path="/tmp/guardian_test_summaries.jsonl",
+        event_log_path=str(base / "events.jsonl"),
+        summary_log_path=str(base / "summaries.jsonl"),
         whitelist_path=":memory:",
         blocklist_path=":memory:",
         requests_path=":memory:",
@@ -57,7 +65,7 @@ def _config(parent_pin: str = "testpin", admin_path: str = ":memory:") -> Guardi
         screenshot_confidence_threshold=0.6,
         enable_vision=False,
         model="m",
-        config_dir="/tmp",
+        config_dir=str(base),
         oauth_token="t",
         admin_path=admin_path,
     )
