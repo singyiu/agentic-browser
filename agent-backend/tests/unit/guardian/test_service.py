@@ -173,6 +173,7 @@ def _client(
     admin_path: str = ":memory:",
     summary_log: object = None,
     metrics: object = None,
+    client_addr: tuple[str, int] = ("127.0.0.1", 0),
 ) -> TestClient:
     kwargs: dict[str, object] = {}
     if whitelist is not None:
@@ -190,7 +191,9 @@ def _client(
         event_log=log or FakeLog(),
         **kwargs,
     )
-    return TestClient(app)
+    # Default to a loopback peer (the parent on the guardian Mac) — first-run setup
+    # endpoints treat non-loopback callers as untrusted; LAN tests override this.
+    return TestClient(app, client=client_addr)
 
 
 def test_health() -> None:
@@ -845,6 +848,43 @@ def test_setup_pin_rejects_bad_format(tmp_path: Path) -> None:
     assert client.post("/setup/pin", json={"pin": "12"}).status_code == 422
     # Rejected attempts leave it unconfigured.
     assert client.get("/setup/status").json() == {"pin_configured": False}
+
+
+def test_setup_pin_rejected_from_lan_before_configured(tmp_path: Path) -> None:
+    """First-run PIN creation is loopback-only: a LAN device must not race the parent."""
+    client = _client(
+        FakeClassifier(Verdict("allow")),
+        parent_pin="",
+        admin_path=str(tmp_path / "admin.json"),
+        client_addr=("192.168.1.50", 4242),
+    )
+    resp = client.post("/setup/pin", json={"pin": "4825"})
+    assert resp.status_code == 403
+    assert client.get("/setup/status").json() == {"pin_configured": False}
+
+
+def test_setup_health_minimal_for_lan_before_pin(tmp_path: Path) -> None:
+    """Pre-PIN, non-loopback callers learn only that setup is pending — no LAN topology."""
+    client = _client(
+        FakeClassifier(Verdict("allow")),
+        parent_pin="",
+        admin_path=str(tmp_path / "admin.json"),
+        client_addr=("192.168.1.50", 4242),
+    )
+    resp = client.get("/setup/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"guardian": {"ok": True}, "pin_configured": False}
+
+
+def test_setup_health_full_for_loopback_before_pin(tmp_path: Path) -> None:
+    client = _client(
+        FakeClassifier(Verdict("allow")),
+        parent_pin="",
+        admin_path=str(tmp_path / "admin.json"),
+    )
+    body = client.get("/setup/health").json()
+    assert body["pin_configured"] is False
+    assert "network" in body  # full payload for the wizard running on the guardian Mac
 
 
 # --- settings: change PIN (re-auth with current PIN) ---

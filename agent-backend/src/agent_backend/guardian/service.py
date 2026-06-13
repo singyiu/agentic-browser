@@ -127,6 +127,12 @@ _TIME_POLICY_SYSTEM_PROMPT = (
 )
 
 
+def _is_loopback_client(request: Request) -> bool:
+    """True when the TCP peer is this machine — the first-run setup trust anchor."""
+    host = request.client.host if request.client else ""
+    return host in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+
 def _clamp_request_minutes(value: object) -> int | None:
     """A teen's requested-minutes ask: int in [1, 1440], else None (let the parent decide)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -1526,6 +1532,13 @@ def create_app(
         # One-shot: once a PIN exists this is closed (409), so it can't reset an existing PIN.
         if pin_store.is_configured():
             return JSONResponse({"error": "parent PIN already configured"}, status_code=409)
+        # Loopback-only: on a LAN-bound guardian, any device could otherwise race the
+        # parent to create the PIN and become the permanent "parent".
+        if not _is_loopback_client(request):
+            return JSONResponse(
+                {"error": "first-run setup is only available on the guardian Mac itself"},
+                status_code=403,
+            )
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
@@ -1550,6 +1563,10 @@ def create_app(
             guard = _require_pin(request)
             if guard is not None:
                 return guard
+        elif not _is_loopback_client(request):
+            # Pre-PIN, non-local callers learn only that setup is pending — not the LAN
+            # topology, model, or profile names (the wizard runs on the guardian Mac).
+            return JSONResponse({"guardian": {"ok": True}, "pin_configured": False})
         kids = [p for p in _pm.list_profiles() if not p.get("is_global")]
         lan_ip, firewall = await asyncio.get_running_loop().run_in_executor(
             None, _probe_network_firewall
