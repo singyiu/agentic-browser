@@ -8,11 +8,14 @@ PY="$BACKEND_ROOT/.venv/bin/python"
 ENDPOINT="${GUARDIAN_ENDPOINT:-http://127.0.0.1:2947}"
 : "${GUARDIAN_TOKEN:?set GUARDIAN_TOKEN to the same value the guardian service uses}"
 
-"$PY" - "$ENDPOINT" "$GUARDIAN_TOKEN" <<'PYEOF'
+# Token travels via env, not argv — argv is visible to every local user in `ps`.
+GUARDIAN_TOKEN="$GUARDIAN_TOKEN" "$PY" - "$ENDPOINT" <<'PYEOF'
+import os
 import sys
+
 import httpx
 
-endpoint, token = sys.argv[1], sys.argv[2]
+endpoint, token = sys.argv[1], os.environ["GUARDIAN_TOKEN"]
 headers = {"X-Guardian-Token": token}
 print("health:", httpx.get(endpoint + "/health", timeout=5).json())
 

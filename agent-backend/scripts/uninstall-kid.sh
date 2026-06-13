@@ -2,6 +2,9 @@
 # Aegis — remove the locked browser from THIS child's Mac. Enter the Mac password when asked
 # (removing the lock policy needs admin). Self-contained: it needs no repo, so it can be run on a
 # kid Mac via the guardian's /dist/uninstall-kid.sh.
+#
+# Deliberately NO `set -e`: an uninstaller should clean up as much as it can even when
+# one step fails (set -u still guards against unset-variable rm targets).
 set -uo pipefail
 
 AGENT_LABEL="com.aegis.kidbrowser"
@@ -13,13 +16,15 @@ APP="/Applications/Chromium.app"
 bold(){ printf '\033[1m%s\033[0m\n' "$*"; }
 ok(){   printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn(){ printf '  \033[33m!\033[0m %s\n' "$*"; }
+# Refuses empty or root targets so an edited/corrupt variable can never nuke "/".
+safe_rm_rf(){ [ -n "${1:-}" ] && [ "$1" != "/" ] && rm -rf "$1"; }
 
 bold "Aegis — removing the locked browser from this Mac"
 
 # 1. Stop and remove the auto-update agent.
 launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
 rm -f "$AGENT_PLIST"
-rm -rf "$SUPPORT"
+safe_rm_rf "$SUPPORT"
 ok "Auto-update agent removed."
 
 # 2. Remove the lock policy (needs admin).
@@ -39,7 +44,7 @@ fi
 pkill -f "Chromium.app/Contents/MacOS/Chromium" 2>/dev/null || true
 sleep 1
 if [ -d "$APP" ]; then
-  rm -rf "$APP" && ok "Removed $APP." || warn "Could not remove $APP."
+  safe_rm_rf "$APP" && ok "Removed $APP." || warn "Could not remove $APP."
 fi
 
 printf '\n'

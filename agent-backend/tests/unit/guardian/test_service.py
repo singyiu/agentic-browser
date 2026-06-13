@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -3179,6 +3180,16 @@ def test_enroll_download_serves_setup_command(tmp_path: Path) -> None:
     assert 'PROFILE="alex"' in body  # this kid's profile is baked into the script
     assert 'ENDPOINT="http' in body  # the guardian's LAN URL is baked in
     assert "/ext/$PROFILE/updates.xml" in body  # script targets this profile's per-kid CRX
+
+
+def test_enroll_download_pins_updater_hash(tmp_path: Path) -> None:
+    # The AirDropped bootstrap is the trust anchor: it pins the SHA256 of the updater
+    # script it later downloads over plain LAN HTTP, so a MitM'd download dies loudly.
+    body = _ext_client(tmp_path).get("/enroll/alex").text
+    assert "__UPDATE_CHECK_SHA256__" not in body
+    pinned = body.split('UPDATE_CHECK_SHA256="', 1)[1].split('"', 1)[0]
+    updater = Path(__file__).parents[3] / "scripts" / "kid-update-check.sh"
+    assert pinned == hashlib.sha256(updater.read_bytes()).hexdigest()
 
 
 def test_enroll_download_rejects_bad_profile(tmp_path: Path) -> None:

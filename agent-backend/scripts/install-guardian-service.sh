@@ -35,13 +35,32 @@ PORT="$(sed -n -E 's/^[[:space:]]*GUARDIAN_PORT[[:space:]]*=[[:space:]]*["'\'']?
 PORT="${PORT:-2947}"
 
 # --- Helpers ------------------------------------------------------------------
-render() {  # render <template-path> to stdout with placeholders substituted
-  local content
-  content="$(cat "$1")"
-  content="${content//__LABEL__/$LABEL}"
-  content="${content//__BACKEND_ROOT__/$BACKEND_ROOT}"
-  content="${content//__PATH__/$PATH}"
-  printf '%s\n' "$content"
+render() {  # render <xml|raw> <template-path> to stdout with placeholders substituted
+  # PATH and repo paths can contain XML-special characters (& < > ' ") — raw bash
+  # substitution corrupted the launchd plist. "xml" mode escapes every value; the
+  # systemd unit is INI, not XML, so Linux renders with "raw".
+  RENDER_MODE="$1" RENDER_TEMPLATE="$2" RENDER_LABEL="$LABEL" \
+    RENDER_BACKEND_ROOT="$BACKEND_ROOT" RENDER_PATH="$PATH" "$PY" - <<'PYEOF'
+import os
+from xml.sax.saxutils import escape
+
+xml_mode = os.environ["RENDER_MODE"] == "xml"
+
+
+def esc(value: str) -> str:
+    return escape(value, {'"': "&quot;", "'": "&apos;"}) if xml_mode else value
+
+
+with open(os.environ["RENDER_TEMPLATE"], encoding="utf-8") as fh:
+    content = fh.read()
+for placeholder, env_key in (
+    ("__LABEL__", "RENDER_LABEL"),
+    ("__BACKEND_ROOT__", "RENDER_BACKEND_ROOT"),
+    ("__PATH__", "RENDER_PATH"),
+):
+    content = content.replace(placeholder, esc(os.environ[env_key]))
+print(content)
+PYEOF
 }
 
 guardian_health() {  # exit 0 if GET /health answers
@@ -75,7 +94,8 @@ case "$OS" in
     PLIST="$PLIST_DIR/$LABEL.plist"
     DOMAIN="gui/$(id -u)"
     mkdir -p "$PLIST_DIR"
-    render "$BACKEND_ROOT/deploy/guardian.launchd.plist.template" > "$PLIST"
+    render xml "$BACKEND_ROOT/deploy/guardian.launchd.plist.template" > "$PLIST"
+    plutil -lint "$PLIST" >/dev/null || { echo "ERROR: rendered plist is invalid XML." >&2; exit 1; }
     echo "Wrote $PLIST"
     # Unload any existing job first. bootout is asynchronous, so wait for the label to
     # actually disappear before bootstrapping — otherwise bootstrap races it and fails.
@@ -104,7 +124,7 @@ case "$OS" in
     UNIT_DIR="$HOME/.config/systemd/user"
     UNIT="$UNIT_DIR/$UNIT_NAME"
     mkdir -p "$UNIT_DIR"
-    render "$BACKEND_ROOT/deploy/guardian.systemd.service.template" > "$UNIT"
+    render raw "$BACKEND_ROOT/deploy/guardian.systemd.service.template" > "$UNIT"
     echo "Wrote $UNIT"
     systemctl --user daemon-reload
     systemctl --user enable --now "$UNIT_NAME"

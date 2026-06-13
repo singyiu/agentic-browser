@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import hmac
 import json
 import platform
@@ -564,13 +565,27 @@ def _extension_dist_status(dist_dir: str) -> dict[str, Any]:
 ExtPacker = Callable[[str, str, str], Awaitable[None]]  # (profile, token, endpoint) -> None
 
 _KID_BOOTSTRAP_TEMPLATE = _REPO_ROOT / "agent-backend" / "deploy" / "kid-bootstrap.command.template"
+_KID_UPDATE_CHECK_SCRIPT = _REPO_ROOT / "agent-backend" / "scripts" / "kid-update-check.sh"
 _SAFE_PROFILE_SEG = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 def _render_kid_bootstrap(endpoint: str, profile: str) -> str:
-    """Render the kid-setup .command for a profile (endpoint + profile substituted in)."""
+    """Render the kid-setup .command for a profile (endpoint + profile substituted in).
+
+    Also pins the SHA256 of the updater script: the bootstrap reaches the kid Mac
+    out-of-band (AirDrop/USB), so a hash baked here lets it verify the later plain-HTTP
+    download of kid-update-check.sh — the one fetch that becomes a login LaunchAgent.
+    """
     text = _KID_BOOTSTRAP_TEMPLATE.read_text(encoding="utf-8")
-    return text.replace("__ENDPOINT__", endpoint).replace("__PROFILE__", profile)
+    try:
+        updater_sha = hashlib.sha256(_KID_UPDATE_CHECK_SCRIPT.read_bytes()).hexdigest()
+    except OSError:
+        updater_sha = ""  # the template skips verification when no pin was baked
+    return (
+        text.replace("__ENDPOINT__", endpoint)
+        .replace("__PROFILE__", profile)
+        .replace("__UPDATE_CHECK_SHA256__", updater_sha)
+    )
 
 
 # --- Agent chat: context assembly + structured-envelope parsing (POST /agent/chat) ------------

@@ -6,7 +6,7 @@
 #   4. wait for /health to confirm it came back up
 #
 # Usage:  bash agent-backend/scripts/update-guardian.sh
-set -uo pipefail
+set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_ROOT="$(dirname "$HERE")"
@@ -21,7 +21,7 @@ die() { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 step(){ printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 PORT="$(sed -n -E 's/^[[:space:]]*GUARDIAN_PORT[[:space:]]*=[[:space:]]*["'\'']?([0-9]+).*/\1/p' \
-  "$BACKEND_ROOT/.env" 2>/dev/null | tail -1)"
+  "$BACKEND_ROOT/.env" 2>/dev/null | tail -1 || true)"
 PORT="${PORT:-2947}"
 
 guardian_health() {

@@ -100,8 +100,17 @@ rm -rf "$BUILD_DIR" "$DIST_DIR/aegis-build.crx"
 mkdir -p "$BUILD_DIR"
 # Copy the extension verbatim except the dev placeholder config and OS cruft.
 rsync -a --exclude 'guardian-config.json' --exclude '.DS_Store' "$EXT_DIR"/ "$BUILD_DIR"/
-printf '{"token":"%s","endpoint":"%s"}\n' "$TOKEN" "$ENDPOINT" \
-  >"$BUILD_DIR/guardian-config.json"
+# Proper JSON serialization (quotes/backslashes in values must not corrupt the file);
+# values travel via env, never argv, so the token cannot show up in `ps`.
+AEGIS_BAKE_TOKEN="$TOKEN" AEGIS_BAKE_ENDPOINT="$ENDPOINT" "$PYTHON" -c '
+import json, os, sys
+sys.stdout.write(
+    json.dumps(
+        {"token": os.environ["AEGIS_BAKE_TOKEN"], "endpoint": os.environ["AEGIS_BAKE_ENDPOINT"]}
+    )
+    + "\n"
+)
+' >"$BUILD_DIR/guardian-config.json"
 
 # --- pack (CRX3, signed with the stable key) ------------------------------------
 # --pack-extension writes "<BUILD_DIR>.crx" beside the build dir, then exits.

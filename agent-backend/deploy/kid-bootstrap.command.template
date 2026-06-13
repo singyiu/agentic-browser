@@ -12,10 +12,14 @@
 #   3. Launches it. From then on it reports to the guardian and enforces your rules.
 #
 # This file is safe to re-run (e.g. to repair the install).
-set -uo pipefail
+set -euo pipefail
 
 ENDPOINT="__ENDPOINT__"
 PROFILE="__PROFILE__"
+# SHA256 of the updater script this bootstrap downloads in step 5, baked in by the
+# guardian at render time. This file travels out-of-band (AirDrop), so the pin lets us
+# verify a download that otherwise rides plain LAN HTTP.
+UPDATE_CHECK_SHA256="__UPDATE_CHECK_SHA256__"
 POLICY_PLIST="/Library/Managed Preferences/org.chromium.Chromium.plist"
 APPS_DIR="/Applications"
 TMP_ZIP="${TMPDIR:-/tmp}/aegis-browser.zip"
@@ -27,6 +31,16 @@ step(){ printf '\n\033[1m[%s/6]\033[0m \033[1m%s\033[0m\n' "$1" "$2"; }
 die(){  printf '  \033[31m✗\033[0m %s\n' "$*" >&2; printf '\nSetup stopped. %s\n' "${2:-Please tell the parent.}" >&2; exit 1; }
 
 json_field(){ grep -oE "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed -E "s/.*:[[:space:]]*\"([^\"]*)\"/\1/" | head -1; }
+
+# Defense-in-depth: the guardian validates these before substituting, but refuse to run
+# a tampered or corrupt copy of this file outright.
+case "$PROFILE" in
+  ""|*[!A-Za-z0-9_-]*) die "This setup file looks corrupted (bad profile). Re-download it from the guardian." ;;
+esac
+case "$ENDPOINT" in
+  http://*|https://*) : ;;
+  *) die "This setup file looks corrupted (bad guardian address). Re-download it from the guardian." ;;
+esac
 
 clear 2>/dev/null || true
 bold "Aegis — setting up this child's browser"
@@ -45,9 +59,14 @@ ok "Guardian is reachable."
 step 2 "Downloading the Aegis browser"
 MANIFEST="$(curl -fsSL "$ENDPOINT/dist/manifest.json" 2>/dev/null)" \
   || die "The guardian hasn't published the browser yet (ask the parent to run release-chromium.sh)."
-SHA_EXPECTED="$(printf '%s' "$MANIFEST" | grep -oE '"sha256"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"' | grep -oE '[0-9a-f]{64}' | head -1)"
-APP_NAME="$(printf '%s' "$MANIFEST" | json_field app_name)"; APP_NAME="${APP_NAME:-Chromium.app}"
-VERSION="$(printf '%s' "$MANIFEST" | json_field version)"
+SHA_EXPECTED="$(printf '%s' "$MANIFEST" | grep -oE '"sha256"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"' | grep -oE '[0-9a-f]{64}' | head -1 || true)"
+APP_NAME="$(printf '%s' "$MANIFEST" | json_field app_name || true)"; APP_NAME="${APP_NAME:-Chromium.app}"
+VERSION="$(printf '%s' "$MANIFEST" | json_field version || true)"
+# The app name becomes an rm/install target under /Applications — never let a bad
+# manifest smuggle in a path.
+case "$APP_NAME" in
+  */*|*..*) die "This guardian's browser manifest looks invalid (unsafe app name)." ;;
+esac
 curl -fSL --progress-bar "$ENDPOINT/dist/browser.zip" -o "$TMP_ZIP" || die "Download failed."
 if [ -n "$SHA_EXPECTED" ]; then
   SHA_GOT="$(shasum -a 256 "$TMP_ZIP" | awk '{print $1}')"
@@ -68,7 +87,7 @@ ok "Installed."
 
 # --- 4. Lock it to the parental-control extension (needs the Mac password) -----
 step 4 "Locking the browser (enter this Mac's password if asked)"
-EXT_ID="$(curl -fsSL "$ENDPOINT/ext/$PROFILE/updates.xml" 2>/dev/null | grep -oE "appid='[a-p]{32}'" | grep -oE '[a-p]{32}' | head -1)"
+EXT_ID="$(curl -fsSL "$ENDPOINT/ext/$PROFILE/updates.xml" 2>/dev/null | grep -oE "appid='[a-p]{32}'" | grep -oE '[a-p]{32}' | head -1 || true)"
 [ "${#EXT_ID}" -eq 32 ] || die "Could not read the extension id from the guardian."
 UPDATE_URL="$ENDPOINT/ext/$PROFILE/updates.xml"
 sudo mkdir -p "$(dirname "$POLICY_PLIST")"
@@ -91,6 +110,10 @@ sudo tee "$POLICY_PLIST" >/dev/null <<PLIST
       <key>toolbar_pin</key><string>force_pinned</string>
     </dict>
   </dict>
+  <!-- REQUIRED while extension updates are served over plain LAN HTTP: Chromium refuses a
+       non-HTTPS update_url otherwise (loopback is exempt; LAN addresses are not). The CRX
+       itself stays integrity-protected by its signature, which must match the pinned
+       extension id above. Remove only after the guardian serves HTTPS — see SECURITY.md. -->
   <key>ExtensionAllowInsecureUpdates</key><true/>
 </dict>
 </plist>
@@ -109,6 +132,13 @@ AGENT_LABEL="com.aegis.kidbrowser"
 AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
 mkdir -p "$SUPPORT" "$HOME/Library/LaunchAgents"
 if curl -fsSL "$ENDPOINT/dist/kid-update-check.sh" -o "$SUPPORT/kid-update-check.sh"; then
+  if [ -n "$UPDATE_CHECK_SHA256" ]; then
+    UPDATER_SHA_GOT="$(shasum -a 256 "$SUPPORT/kid-update-check.sh" | awk '{print $1}')"
+    if [ "$UPDATER_SHA_GOT" != "$UPDATE_CHECK_SHA256" ]; then
+      rm -f "$SUPPORT/kid-update-check.sh"
+      die "The updater download failed its integrity check. Re-download this setup file from the guardian and run it again."
+    fi
+  fi
   chmod +x "$SUPPORT/kid-update-check.sh"
   cat >"$AGENT_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

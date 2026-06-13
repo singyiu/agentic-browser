@@ -48,7 +48,8 @@ fi
 # Writing the real managed-preferences plist requires root.
 if [ -z "${AEGIS_PLIST_PATH:-}" ] && [ "$(id -u)" -ne 0 ]; then
   echo "ERROR: run with sudo (writes $PLIST)." >&2
-  echo "  sudo bash $HERE/$(basename "$0")" >&2
+  # Quoted so the copy-paste suggestion survives spaces in the repo path.
+  echo "  sudo bash \"$HERE/$(basename "$0")\"" >&2
   exit 1
 fi
 

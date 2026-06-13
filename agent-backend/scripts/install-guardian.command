@@ -18,7 +18,7 @@
 #
 # The only things it asks YOU for: your Claude Max login (in a browser) and your
 # Mac password (for the firewall rule and the background service).
-set -uo pipefail
+set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_ROOT="$(dirname "$HERE")"
@@ -37,7 +37,8 @@ die()  { errln "$*"; printf '\nSetup stopped. Fix the issue above, then run this
 # --- .env helpers (update-or-append a KEY=VALUE line) --------------------------
 env_get() {  # env_get KEY  -> current value (last wins), empty if unset
   [ -f "$ENV_FILE" ] || return 0
-  grep -E "^[[:space:]]*$1=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-
+  # `|| true`: an absent key is a normal answer, not an error (pipefail + set -e).
+  grep -E "^[[:space:]]*$1=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 env_set() {  # env_set KEY VALUE  (atomic; no special-char interpretation of VALUE)
   local key="$1" val="$2" tmp
@@ -94,7 +95,9 @@ ok "macOS detected."
 
 if ! command -v uv >/dev/null 2>&1; then
   warn "'uv' (the Python installer) is missing — installing it now…"
-  curl -LsSf https://astral.sh/uv/install.sh | sh || die "Could not install 'uv'. See https://docs.astral.sh/uv/."
+  # --proto '=https' --tlsv1.2: never follow a downgraded redirect for piped-to-shell code.
+  curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh | sh \
+    || die "Could not install 'uv'. See https://docs.astral.sh/uv/."
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
 command -v uv >/dev/null 2>&1 || die "'uv' still not found on PATH. Open a new Terminal and run this again."
@@ -125,8 +128,14 @@ else
   ok "Keeping your existing GUARDIAN_TOKEN."
 fi
 
-env_set GUARDIAN_HOST "0.0.0.0"
-ok "Guardian will accept connections from kid Macs on your network (GUARDIAN_HOST=0.0.0.0)."
+# Only set on first run: a parent who deliberately re-bound the guardian (e.g. back to
+# 127.0.0.1 for a single-Mac setup) keeps their choice across re-runs.
+if [ -z "$(env_get GUARDIAN_HOST)" ]; then
+  env_set GUARDIAN_HOST "0.0.0.0"
+  ok "Guardian will accept connections from kid Macs on your network (GUARDIAN_HOST=0.0.0.0)."
+else
+  ok "Keeping your existing GUARDIAN_HOST=$(env_get GUARDIAN_HOST)."
+fi
 
 LAN_IP="$(detect_lan_ip || true)"
 PORT="$(env_get GUARDIAN_PORT)"; PORT="${PORT:-2947}"
@@ -165,7 +174,7 @@ printf '\n'
 bold "✓ Guardian installed."
 printf '┌──────────────────────────────────────────────────────────────────┐\n'
 printf '  Set your parent PIN in the browser window that just opened.\n'
-[ -n "$LAN_IP" ] && printf '  Console (this Mac):   http://localhost:%s/\n  On your network:      http://%s:%s/\n' "$PORT" "$LAN_IP" "$PORT"
+[ -n "$LAN_IP" ] && printf '  Console (this Mac):   http://localhost:%s/\n  On your network:      http://%s:%s/\n' "$PORT" "$LAN_IP" "$PORT" || true
 printf '  Next: in the console, click “Add a kid” to set up each child’s Mac.\n'
 printf '└──────────────────────────────────────────────────────────────────┘\n'
 printf '\nManage the service:  bash "%s/uninstall-guardian-service.sh"  to remove.\n' "$HERE"
