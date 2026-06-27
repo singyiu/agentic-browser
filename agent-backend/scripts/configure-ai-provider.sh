@@ -136,7 +136,7 @@ configure_codex() {
   local model; model="$(env_get GUARDIAN_MODEL)"; model="${model:-gpt-5-codex}"
   printf '  Testing a tiny Codex round-trip (model %s)…\n' "$model"
   if printf 'Reply with exactly: OK' | CODEX_HOME="$CODEX_HOME_DIR" codex exec - \
-       --skip-git-repo-check --sandbox read-only --ask-for-approval never \
+       --skip-git-repo-check --sandbox read-only \
        --color never --ephemeral -m "$model" >/dev/null 2>&1; then
     ok "Codex responded."
   else

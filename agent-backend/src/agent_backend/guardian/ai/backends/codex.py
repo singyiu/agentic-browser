@@ -15,14 +15,14 @@ from typing import Any
 from ...config import GuardianConfig
 
 # Deterministic, side-effect-free, non-interactive completion: read prompt from stdin (-),
-# never edit files (read-only sandbox), never pause for approval, no ANSI, no persisted
-# session rollout files, and allow running outside a git repo.
+# never edit files (read-only sandbox), no ANSI, no persisted session rollout files, and allow
+# running outside a git repo. `codex exec` is non-interactive by default (it never pauses for
+# approval), so no approval flag is passed — `--ask-for-approval` was removed from `exec` in the
+# codex CLI 0.142+.
 _BASE_FLAGS = (
     "--skip-git-repo-check",
     "--sandbox",
     "read-only",
-    "--ask-for-approval",
-    "never",
     "--color",
     "never",
     "--ephemeral",

@@ -97,13 +97,14 @@ async def test_complete_argv_has_required_flags(tmp_path: Path) -> None:
         "--skip-git-repo-check",
         "--sandbox",
         "read-only",
-        "--ask-for-approval",
-        "never",
         "--color",
         "never",
         "--ephemeral",
     ):
         assert flag in argv
+    # `codex exec` is non-interactive by default; `--ask-for-approval` was removed from the
+    # `exec` subcommand in codex CLI 0.142+, so it must NOT be passed (regression guard).
+    assert "--ask-for-approval" not in argv
     assert argv[-2:] == ["-m", "gpt-5-codex"]
 
 

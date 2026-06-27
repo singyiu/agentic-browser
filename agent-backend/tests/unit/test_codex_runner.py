@@ -118,6 +118,10 @@ async def test_run_task_argv_has_json_and_mcp_overrides() -> None:
     assert 'mcp_servers.browser.command="/usr/bin/python3"' in argv
     assert 'mcp_servers.browser.args=["-m", "agent_backend.mcp_server"]' in argv
     assert 'mcp_servers.browser.env.CHROMIUM_CDP_URL="http://127.0.0.1:9222"' in argv
+    # Trust the browser server so non-interactive `codex exec` auto-approves its tool calls.
+    assert 'mcp_servers.browser.default_tools_approval_mode="approve"' in argv
+    # `--ask-for-approval` was removed from `codex exec` in CLI 0.142+ (regression guard).
+    assert "--ask-for-approval" not in argv
 
 
 async def test_run_task_sets_codex_home_env() -> None:

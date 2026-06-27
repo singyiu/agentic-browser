@@ -17,12 +17,13 @@ from ..config import RunnerConfig
 from .base import SYSTEM_PROMPT, EventSink, emit
 
 _STDERR_TAIL = 500
-# MCP tool calls aren't codex shell/FS ops, so a read-only sandbox is enough; -a never keeps
-# the loop autonomous. Bump --sandbox to workspace-write if a codex build gates MCP calls.
+# A read-only sandbox is enough — MCP tool calls aren't codex shell/FS ops. `--ask-for-approval`
+# was removed from `exec` in codex CLI 0.142+ (command approval defaults to "never" there). MCP
+# tool calls are gated separately and codex `exec` auto-cancels them with no TTY to approve from,
+# so the browser server is marked trusted via default_tools_approval_mode="approve" (see
+# _mcp_overrides) rather than weakening the sandbox.
 _BASE_FLAGS = (
     "--json",
-    "--ask-for-approval",
-    "never",
     "--skip-git-repo-check",
     "--sandbox",
     "read-only",
@@ -32,7 +33,12 @@ _BASE_FLAGS = (
 
 
 def _mcp_overrides(python: str, cdp_url: str) -> list[str]:
-    """`-c` config overrides that register the browser MCP server for this run only."""
+    """`-c` config overrides that register the browser MCP server for this run only.
+
+    ``default_tools_approval_mode="approve"`` marks this server trusted so non-interactive
+    ``codex exec`` auto-approves its tool calls; without it codex cancels every call ("user
+    cancelled MCP tool call") because there is no TTY to elicit approval from.
+    """
     return [
         "-c",
         f'mcp_servers.browser.command="{python}"',
@@ -40,6 +46,8 @@ def _mcp_overrides(python: str, cdp_url: str) -> list[str]:
         'mcp_servers.browser.args=["-m", "agent_backend.mcp_server"]',
         "-c",
         f'mcp_servers.browser.env.CHROMIUM_CDP_URL="{cdp_url}"',
+        "-c",
+        'mcp_servers.browser.default_tools_approval_mode="approve"',
     ]
 
 
