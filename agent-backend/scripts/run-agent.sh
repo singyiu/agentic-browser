@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Run an autonomous browser task. Sets the isolated CLAUDE_CONFIG_DIR so the
-# backend's Claude config/skills stay separate from your personal ~/.claude.
+# Run an autonomous browser task on the configured provider (AEGIS_AI_PROVIDER: claude|codex).
+# Sets the isolated per-provider config dirs so the backend's CLI config/auth stay separate
+# from your personal ~/.claude and ~/.codex.
 #
 #   bash scripts/run-agent.sh "Open example.com and report the H1"
 set -euo pipefail
@@ -8,6 +9,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_ROOT="$(dirname "$HERE")"
 
 export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$BACKEND_ROOT/claude-config}"
+export CODEX_HOME="${CODEX_HOME:-$BACKEND_ROOT/codex-config}"
 PY="$BACKEND_ROOT/.venv/bin/python"
 
 if [ ! -x "$PY" ]; then

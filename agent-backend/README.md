@@ -4,9 +4,12 @@ Claude-Max-backed agentic browser-control backend for the `agentic-browser` fork
 guardian layer that classifies pages, enforces a parental whitelist, and lets a parent approve
 or block what their kid asks to unblock.
 
-Aegis runs an autonomous loop with Claude (your **Claude Max** subscription, via the
-Claude Agent SDK) that drives a Chromium tab through a **browser-control MCP server**.
-Claude's config/skills are isolated from your personal `~/.claude` via `CLAUDE_CONFIG_DIR`.
+Aegis runs an autonomous loop on a **subscription, not a metered API key**: either your
+**Claude Max** plan (the `claude` CLI, via the Claude Agent SDK) or your **ChatGPT** plan (the
+`codex` CLI). It drives a Chromium tab through a **browser-control MCP server**; the active
+provider is chosen by `AEGIS_AI_PROVIDER` (default `claude`). Each provider's config/auth is
+isolated from your personal `~/.claude` / `~/.codex` via `CLAUDE_CONFIG_DIR` / `CODEX_HOME`. See
+[Choosing your AI provider](#choosing-your-ai-provider-claude-or-codex).
 
 ## Quick start for parents (the easy way)
 
@@ -56,8 +59,10 @@ runner (Agent SDK, query())  ──spawns──▶  browser-control MCP server (
 
 - `src/agent_backend/browser/` — `BrowserController` (Playwright/CDP) + pure helpers.
 - `src/agent_backend/mcp_server/` — FastMCP stdio server exposing `browser_*` tools.
-- `src/agent_backend/runner/` — Agent SDK runner (subscription auth, browser-only tools).
+- `src/agent_backend/runner/` — browser runner: provider-agnostic facade + Claude/Codex backends.
+- `src/agent_backend/guardian/ai/` — classifier completion backends (Claude SDK / Codex CLI) + factory.
 - `claude-config/` — the isolated `CLAUDE_CONFIG_DIR` (settings, `.mcp.json`, `CLAUDE.md`).
+- `codex-config/` — the isolated `CODEX_HOME` for the codex provider (`config.toml`, `auth.json`).
 
 ## Setup
 
@@ -66,13 +71,44 @@ cd agent-backend
 uv sync                              # creates .venv + installs deps (runtime + dev) from uv.lock
 uv run playwright install chromium   # for the integration tests
 
-claude setup-token                   # uses your Claude Max subscription
-cp .env.example .env                 # paste the token into CLAUDE_CODE_OAUTH_TOKEN
+cp .env.example .env
+bash scripts/configure-ai-provider.sh   # pick claude or codex + sign in (writes .env)
 ```
 
 > Uses [uv](https://docs.astral.sh/uv/) (`brew install uv`); `uv.lock` pins every dependency for
 > reproducible installs. Without uv: `python3 -m venv .venv && source .venv/bin/activate && pip
 > install -e . --group dev`.
+
+### Choosing your AI provider (Claude or Codex)
+
+Aegis works with either subscription; pick one with **`bash scripts/configure-ai-provider.sh`**
+(it sets `AEGIS_AI_PROVIDER` and signs you in). The same provider powers page classification, the
+parent-chat agent, and the browser runner. Switch any time by re-running the script and restarting
+the guardian.
+
+| | **Claude** (default) | **Codex** |
+|---|---|---|
+| Subscription | Claude Max | ChatGPT Plus/Pro/Team |
+| CLI | `claude` (`npm i -g @anthropic-ai/claude-code`) | `codex` (`npm i -g @openai/codex`) |
+| Sign-in | `claude setup-token` → token in `.env` (`CLAUDE_CODE_OAUTH_TOKEN`) | `codex login` → `auth.json` under `CODEX_HOME` (auto-refreshed) |
+| Isolated dir | `CLAUDE_CONFIG_DIR=claude-config/` | `CODEX_HOME=codex-config/` |
+| Default models | `claude-haiku-4-5` (classify) / `claude-sonnet-4-5` (agent) | `gpt-5-codex` (override via `GUARDIAN_MODEL` / `GUARDIAN_AGENT_MODEL` / `AGENT_MODEL`) |
+
+Set `AEGIS_AI_PROVIDER=claude` (or leave unset) for Claude, `codex` for Codex. Do **not** set
+`ANTHROPIC_API_KEY` under the claude provider — it would override the subscription and bill
+per-token. Codex stores its OAuth session in `codex-config/auth.json` and refreshes it in place, so
+the headless service just needs that file present (the launch scripts point `CODEX_HOME` at it).
+Both `claude-config/` and `codex-config/` are git-ignored — they hold subscription tokens, never
+commit them.
+
+Manual setup instead of the script:
+
+```sh
+# Codex (ChatGPT subscription)
+printf 'cli_auth_credentials_store = "file"\n' >> codex-config/config.toml
+CODEX_HOME="$PWD/codex-config" codex login        # browser OAuth into your ChatGPT account
+# then set in .env:  AEGIS_AI_PROVIDER=codex
+```
 
 > Do **not** set `ANTHROPIC_API_KEY` — it overrides the subscription and bills per-token.
 > The runner refuses to start if it is set.
@@ -345,10 +381,14 @@ bash scripts/uninstall-guardian-service.sh
 - **No secrets in the service file.** The generated unit (`~/Library/LaunchAgents/` on macOS,
   `~/.config/systemd/user/` on Linux) holds only paths; the guardian still loads
   `CLAUDE_CODE_OAUTH_TOKEN` / `GUARDIAN_TOKEN` / `GUARDIAN_PARENT_PIN` from `.env` at startup.
-- **`claude` CLI / `node` must be on `PATH`.** The classifier spawns the Claude Code CLI, so the
-  installer bakes your current `PATH` into the unit (launchd/systemd otherwise start with a minimal
-  `PATH` that misses nvm/npm bins). If you switch Node versions (e.g. via nvm), **re-run the
-  installer** so the baked path stays valid.
+- **Your provider CLI (`claude` or `codex`) + `node` must be on `PATH`.** The classifier spawns the
+  chosen provider's CLI, so the installer bakes your current `PATH` into the unit (launchd/systemd
+  otherwise start with a minimal `PATH` that misses nvm/npm bins). If you switch Node versions (e.g.
+  via nvm) or install the provider CLI after install, **re-run the installer** so the baked path
+  stays valid.
+- **Codex `auth.json` must stay writable.** Under the codex provider, the service refreshes
+  `codex-config/auth.json` in place; if the directory isn't writable by the service user, classify
+  calls start failing once the token ages out. Re-run `scripts/configure-ai-provider.sh` to re-sign-in.
 - **Restart only after _hand-editing_ profiles.** The dashboard's Profiles section applies changes
   live; but if you edit `data/guardian_profiles.json` directly, restart the service — macOS:
   `launchctl kickstart -k "gui/$(id -u)/com.aegis.guardian"`; Linux:

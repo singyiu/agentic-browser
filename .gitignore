@@ -9,6 +9,9 @@
 agent-backend/.venv/
 agent-backend/.env
 agent-backend/.chromium-profile/
+# Per-provider CLI config + auth (hold subscription OAuth tokens — never commit).
+agent-backend/claude-config/
+agent-backend/codex-config/
 __pycache__/
 *.pyc
 .pytest_cache/

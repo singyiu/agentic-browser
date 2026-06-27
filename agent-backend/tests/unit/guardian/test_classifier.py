@@ -307,3 +307,27 @@ async def test_generate_propagates_errors(tmp_path: Path) -> None:
         await Classifier(_config(tmp_path), query_fn=boom).generate(
             system_prompt="s", user_prompt="u"
         )
+
+
+# --- explicit backend injection (provider-agnostic seam) --------------------
+
+
+async def test_classify_with_injected_backend(tmp_path: Path) -> None:
+    # A backend may be injected directly, bypassing provider selection entirely.
+    class _Backend:
+        async def complete(self, *, system_prompt: str, user_prompt: str, model: object) -> str:
+            return '{"verdict":"block","reason":"x","confidence":0.9,"categories":[]}'
+
+    verdict = await Classifier(_config(tmp_path), backend=_Backend()).classify({"url": "u"})
+    assert verdict.verdict == "block"
+
+
+async def test_generate_with_injected_backend(tmp_path: Path) -> None:
+    class _Backend:
+        async def complete(self, *, system_prompt: str, user_prompt: str, model: object) -> str:
+            return "generated text"
+
+    out = await Classifier(_config(tmp_path), backend=_Backend()).generate(
+        system_prompt="s", user_prompt="u"
+    )
+    assert out == "generated text"

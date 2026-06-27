@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from agent_backend.config import ConfigError
+from agent_backend.config import (
+    DEFAULT_CODEX_AGENT_MODEL,
+    DEFAULT_CODEX_MODEL,
+    ConfigError,
+)
 from agent_backend.guardian.config import (
     DEFAULT_METRICS_PORT,
     DEFAULT_MODEL,
@@ -22,6 +28,16 @@ def _env(**over: str) -> dict[str, str]:
         "CLAUDE_CODE_OAUTH_TOKEN": "tok",
         "CLAUDE_CONFIG_DIR": "/tmp/cfg",
     }
+    base.update(over)
+    return base
+
+
+def _codex_env(tmp_path: Path, **over: str) -> dict[str, str]:
+    """A signed-in CODEX_HOME (auth.json present) for the codex provider."""
+    codex_home = tmp_path / "codex-config"
+    codex_home.mkdir(exist_ok=True)
+    (codex_home / "auth.json").write_text("{}")
+    base = {"AEGIS_AI_PROVIDER": "codex", "CODEX_HOME": str(codex_home)}
     base.update(over)
     return base
 
@@ -108,3 +124,52 @@ def test_profiles_path_default() -> None:
 def test_profiles_path_override() -> None:
     cfg = GuardianConfig.from_env(_env(GUARDIAN_PROFILES_PATH="/tmp/p.json"))
     assert cfg.profiles_path == "/tmp/p.json"
+
+
+# --- AI provider selection (claude default, codex via ChatGPT subscription) --
+
+
+def test_ai_provider_defaults_to_claude() -> None:
+    assert GuardianConfig.from_env(_env()).ai_provider == "claude"
+
+
+def test_ai_provider_invalid_rejected() -> None:
+    with pytest.raises(ConfigError, match="AEGIS_AI_PROVIDER"):
+        GuardianConfig.from_env(_env(AEGIS_AI_PROVIDER="openai"))
+
+
+def test_codex_provider_sets_home_and_model_defaults(tmp_path: Path) -> None:
+    cfg = GuardianConfig.from_env(_codex_env(tmp_path))
+    assert cfg.ai_provider == "codex"
+    assert cfg.codex_home.endswith("codex-config")
+    assert cfg.model == DEFAULT_CODEX_MODEL
+    assert cfg.agent_model == DEFAULT_CODEX_AGENT_MODEL
+    # Claude-only auth fields are empty under codex.
+    assert cfg.oauth_token == ""
+    assert cfg.config_dir == ""
+
+
+def test_codex_provider_skips_oauth_and_tolerates_api_key(tmp_path: Path) -> None:
+    # No CLAUDE_CODE_OAUTH_TOKEN, and an ANTHROPIC_API_KEY present — neither matters for codex.
+    cfg = GuardianConfig.from_env(_codex_env(tmp_path, ANTHROPIC_API_KEY="sk-ant"))
+    assert cfg.ai_provider == "codex"
+
+
+def test_codex_provider_requires_codex_home() -> None:
+    with pytest.raises(ConfigError, match="CODEX_HOME"):
+        GuardianConfig.from_env({"AEGIS_AI_PROVIDER": "codex"})
+
+
+def test_codex_provider_requires_auth_json(tmp_path: Path) -> None:
+    empty = tmp_path / "codex-config"
+    empty.mkdir()  # no auth.json inside
+    with pytest.raises(ConfigError, match="auth.json"):
+        GuardianConfig.from_env({"AEGIS_AI_PROVIDER": "codex", "CODEX_HOME": str(empty)})
+
+
+def test_codex_model_overrides(tmp_path: Path) -> None:
+    cfg = GuardianConfig.from_env(
+        _codex_env(tmp_path, GUARDIAN_MODEL="gpt-5", GUARDIAN_AGENT_MODEL="gpt-5-pro")
+    )
+    assert cfg.model == "gpt-5"
+    assert cfg.agent_model == "gpt-5-pro"

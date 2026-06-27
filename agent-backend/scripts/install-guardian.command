@@ -7,17 +7,17 @@
 #
 # What it does (macOS):
 #   1. Pre-flight — checks macOS, the `uv` tool (installs it if missing, with
-#      Python 3.12), and the Claude Code CLI.
+#      Python 3.12), and the AI provider CLI (claude or codex).
 #   2. Builds the Python environment (uv sync).
 #   3. Writes agent-backend/.env — auto-generates a strong GUARDIAN_TOKEN, binds
-#      the guardian to the LAN (so kid Macs can reach it), and captures your
-#      Claude Max login token.
+#      the guardian to the LAN (so kid Macs can reach it), and sets up your AI
+#      provider + subscription login (Claude Max or ChatGPT/Codex).
 #   4. Allows the guardian through the macOS firewall (so kid Macs can connect).
 #   5. Installs the always-on background service (starts at login, restarts on crash).
 #   6. Opens the setup console in your browser.
 #
-# The only things it asks YOU for: your Claude Max login (in a browser) and your
-# Mac password (for the firewall rule and the background service).
+# The only things it asks YOU for: your AI provider subscription login (in a browser)
+# and your Mac password (for the firewall rule and the background service).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -103,12 +103,17 @@ fi
 command -v uv >/dev/null 2>&1 || die "'uv' still not found on PATH. Open a new Terminal and run this again."
 ok "uv is installed ($(uv --version 2>/dev/null | head -1))."
 
-if ! command -v claude >/dev/null 2>&1; then
-  warn "The Claude Code CLI ('claude') is not installed."
-  printf '    The guardian uses it to classify pages. Install it, then re-run this script:\n'
-  printf '      npm install -g @anthropic-ai/claude-code      (needs Node.js: https://nodejs.org)\n'
+# The guardian classifies pages with your chosen AI provider's CLI (you pick it in step 3).
+HAVE_CLAUDE=0; command -v claude >/dev/null 2>&1 && HAVE_CLAUDE=1
+HAVE_CODEX=0;  command -v codex  >/dev/null 2>&1 && HAVE_CODEX=1
+if [ "$HAVE_CLAUDE" = 1 ] || [ "$HAVE_CODEX" = 1 ]; then
+  ok "AI provider CLI found:$([ "$HAVE_CLAUDE" = 1 ] && printf ' claude')$([ "$HAVE_CODEX" = 1 ] && printf ' codex')."
+else
+  warn "No AI provider CLI found yet (you'll choose the provider in step 3). Install one:"
+  printf '      Claude Max:  npm install -g @anthropic-ai/claude-code\n'
+  printf '      ChatGPT:     npm install -g @openai/codex\n'
 fi
-command -v node >/dev/null 2>&1 || warn "Node.js not found — the 'claude' CLI needs it (https://nodejs.org)."
+command -v node >/dev/null 2>&1 || warn "Node.js not found — the provider CLIs need it (https://nodejs.org)."
 
 # --- 2. Python environment -----------------------------------------------------
 step 2 "Building the Python environment"
@@ -142,20 +147,14 @@ PORT="$(env_get GUARDIAN_PORT)"; PORT="${PORT:-2947}"
 [ -n "$LAN_IP" ] && ok "This Mac's network address: $LAN_IP (kids will connect to http://$LAN_IP:$PORT)" \
                 || warn "Could not detect a LAN address — connect this Mac to Wi-Fi/Ethernet."
 
-if [ -z "$(env_get CLAUDE_CODE_OAUTH_TOKEN)" ]; then
-  printf '\n  The guardian needs your Claude Max login (a one-time token).\n'
-  if command -v claude >/dev/null 2>&1 && [ -t 0 ]; then
-    printf '  A browser window will open to sign in; a token will be printed here afterward.\n\n'
-    claude setup-token || warn "claude setup-token did not complete."
-    printf '\n  Paste the token shown above and press Return (or leave blank to do this later):\n  > '
-    IFS= read -r TOKEN || TOKEN=""
-    if [ -n "$TOKEN" ]; then env_set CLAUDE_CODE_OAUTH_TOKEN "$TOKEN"; ok "Saved your Claude login token."; \
-      else warn "No token entered — set CLAUDE_CODE_OAUTH_TOKEN in agent-backend/.env before the guardian can classify."; fi
-  else
-    warn "Set this up later: run 'claude setup-token' and paste the result into CLAUDE_CODE_OAUTH_TOKEN in agent-backend/.env."
-  fi
+# AI provider + subscription login (Claude Max or ChatGPT/Codex). Delegated to the dedicated
+# configurator so the provider menu + auth flow live in one place. --no-restart: step 5 starts
+# the service. Re-run any time with: bash scripts/configure-ai-provider.sh
+if [ -t 0 ]; then
+  bash "$HERE/configure-ai-provider.sh" --no-restart \
+    || warn "AI provider setup didn't finish — re-run later: bash scripts/configure-ai-provider.sh"
 else
-  ok "Keeping your existing Claude login token."
+  warn "Non-interactive shell — set up your AI provider later: bash scripts/configure-ai-provider.sh"
 fi
 
 # --- 4. Firewall ---------------------------------------------------------------
@@ -164,7 +163,7 @@ allow_firewall "$PYBIN"
 
 # --- 5. Always-on service ------------------------------------------------------
 step 5 "Installing the always-on guardian service"
-bash "$HERE/install-guardian-service.sh" || die "Service install failed. Scroll up for the error (often a bad/missing Claude token)."
+bash "$HERE/install-guardian-service.sh" || die "Service install failed. Scroll up for the error (often incomplete AI-provider auth — re-run: bash scripts/configure-ai-provider.sh)."
 
 # --- 6. Open the console -------------------------------------------------------
 step 6 "Opening the setup console"

@@ -6,7 +6,15 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from ..config import ConfigError
+from ..config import (
+    DEFAULT_AI_PROVIDER,
+    DEFAULT_CODEX_AGENT_MODEL,
+    DEFAULT_CODEX_MODEL,
+    ConfigError,
+    require_claude_subscription,
+    require_codex_home,
+    resolve_ai_provider,
+)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 2947
@@ -90,6 +98,12 @@ class GuardianConfig:
     agent_model: str = DEFAULT_AGENT_MODEL
     # Verdict when the classifier errors/times out: "open" allows, "closed" blocks.
     classify_fail_mode: str = DEFAULT_CLASSIFY_FAIL_MODE
+    # Headless AI provider: "claude" (Claude Max subscription) or "codex" (ChatGPT
+    # subscription via the codex CLI). Selected by AEGIS_AI_PROVIDER; chooses the backend
+    # the Classifier builds and which auth fields below are populated.
+    ai_provider: str = DEFAULT_AI_PROVIDER
+    # Codex config+auth directory ($CODEX_HOME/auth.json). Set only when ai_provider="codex".
+    codex_home: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> GuardianConfig:
@@ -97,18 +111,20 @@ class GuardianConfig:
         # GUARDIAN_TOKEN is optional: a profiles file (GUARDIAN_PROFILES_PATH) can supply
         # per-teen tokens instead. load_profiles enforces that at least one identity exists.
         token = _clean(e.get("GUARDIAN_TOKEN"))
-        oauth = _clean(e.get("CLAUDE_CODE_OAUTH_TOKEN"))
-        if not oauth:
-            raise ConfigError(
-                "CLAUDE_CODE_OAUTH_TOKEN is not set. Run `claude setup-token` and add it to .env."
-            )
-        if _clean(e.get("ANTHROPIC_API_KEY")):
-            raise ConfigError(
-                "ANTHROPIC_API_KEY is set; it overrides the Max subscription. Unset it."
-            )
-        config_dir = _clean(e.get("CLAUDE_CONFIG_DIR"))
-        if not config_dir:
-            raise ConfigError("CLAUDE_CONFIG_DIR is not set (use scripts/launch-guardian.sh).")
+        # Provider-scoped auth: claude needs the OAuth token + isolated config dir; codex
+        # needs a signed-in CODEX_HOME. Model defaults track the chosen provider.
+        provider = resolve_ai_provider(e)
+        if provider == "claude":
+            oauth = require_claude_subscription(e)
+            config_dir = _clean(e.get("CLAUDE_CONFIG_DIR"))
+            if not config_dir:
+                raise ConfigError("CLAUDE_CONFIG_DIR is not set (use scripts/launch-guardian.sh).")
+            codex_home = ""
+            default_model, default_agent_model = DEFAULT_MODEL, DEFAULT_AGENT_MODEL
+        else:
+            oauth, config_dir = "", ""
+            codex_home = require_codex_home(e)
+            default_model, default_agent_model = DEFAULT_CODEX_MODEL, DEFAULT_CODEX_AGENT_MODEL
         metrics_port = int(_clean(e.get("GUARDIAN_METRICS_PORT")) or DEFAULT_METRICS_PORT)
         if not 1024 <= metrics_port <= 65535:
             raise ConfigError("GUARDIAN_METRICS_PORT must be between 1024 and 65535.")
@@ -158,9 +174,11 @@ class GuardianConfig:
                 _clean(e.get("GUARDIAN_SCREENSHOT_THRESHOLD")) or DEFAULT_SCREENSHOT_THRESHOLD
             ),
             enable_vision=_clean(e.get("GUARDIAN_ENABLE_VISION")).lower() in ("1", "true", "yes"),
-            model=_clean(e.get("GUARDIAN_MODEL")) or DEFAULT_MODEL,
-            agent_model=_clean(e.get("GUARDIAN_AGENT_MODEL")) or DEFAULT_AGENT_MODEL,
+            model=_clean(e.get("GUARDIAN_MODEL")) or default_model,
+            agent_model=_clean(e.get("GUARDIAN_AGENT_MODEL")) or default_agent_model,
             config_dir=config_dir,
             oauth_token=oauth,
             classify_fail_mode=fail_mode,
+            ai_provider=provider,
+            codex_home=codex_home,
         )

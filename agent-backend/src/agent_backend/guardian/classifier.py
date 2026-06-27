@@ -1,24 +1,22 @@
-"""Headless Claude classifier (Claude Max subscription via claude-agent-sdk).
+"""Headless content classifier (provider-agnostic).
 
-Each classification is an independent, stateless one-shot ``query()`` (the proven
-runner pattern) so page verdicts never bleed into each other and context can't grow
-unbounded. The rubric (single source of truth) is defined in rubric.py.
-Always fail-open: any error yields ``allow``.
+Each classification is an independent, stateless one-shot completion so page verdicts never
+bleed into each other and context can't grow unbounded. The rubric (single source of truth) is
+defined in rubric.py. Always fail-open: any error yields ``allow``.
+
+Prompt assembly and verdict parsing live here; the model call is delegated to a
+``CompletionBackend`` (Claude Max subscription or Codex / ChatGPT subscription), selected from
+``config.ai_provider`` by :func:`agent_backend.guardian.ai.factory.build_backend`.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 from typing import Any
 
-from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query
-
+from .ai.backend import CompletionBackend
 from .config import DEFAULT_AGE, GuardianConfig
 from .rubric import rubric
 from .verdict import Verdict, allow, parse_verdict
-
-_DISALLOWED = ["Bash", "Edit", "Write", "Read", "NotebookEdit", "WebFetch", "WebSearch", "Task"]
 
 _INSTRUCTIONS = (
     "You are a parental-control content classifier protecting a {age}-year-old child. "
@@ -98,41 +96,27 @@ def _disallowed_block(topics: tuple[str, ...]) -> str:
 
 
 class Classifier:
-    def __init__(self, config: GuardianConfig, *, query_fn: Any = query) -> None:
-        self._config = config
-        self._query = query_fn
-        self._lock = asyncio.Lock()
+    """Provider-agnostic classifier: assembles prompts, delegates the model call to a backend.
 
-    def _base_options(self, system_prompt: str, *, model: str | None = None) -> ClaudeAgentOptions:
-        return ClaudeAgentOptions(
-            model=model or self._config.model,
-            system_prompt=system_prompt,
-            allowed_tools=[],
-            disallowed_tools=list(_DISALLOWED),
-            permission_mode="bypassPermissions",
-            setting_sources=[],
-            mcp_servers={},
-            env={
-                "CLAUDE_CONFIG_DIR": self._config.config_dir,
-                "CLAUDE_CODE_OAUTH_TOKEN": self._config.oauth_token,
-            },
-        )
+    ``backend`` may be injected directly (tests). Otherwise it is built from
+    ``config.ai_provider``; ``query_fn`` is the Claude backend's fake-query test seam and is
+    only meaningful when the provider is ``claude``.
+    """
 
-    def _options(
+    def __init__(
         self,
+        config: GuardianConfig,
         *,
-        age: int = DEFAULT_AGE,
-        policy: str = "",
-        approved_topics: tuple[str, ...] = (),
-        disallowed_topics: tuple[str, ...] = (),
-    ) -> ClaudeAgentOptions:
-        return self._base_options(
-            _instructions(age)
-            + rubric(age)
-            + policy
-            + _approved_block(approved_topics)
-            + _disallowed_block(disallowed_topics)
-        )
+        query_fn: Any = None,
+        backend: CompletionBackend | None = None,
+    ) -> None:
+        self._config = config
+        if backend is not None:
+            self._backend = backend
+        else:
+            from .ai.factory import build_backend
+
+            self._backend = build_backend(config, query_fn=query_fn)
 
     def build_prompt(self, payload: dict[str, str]) -> str:
         body = str(payload.get("body_snippet", ""))[:2000]
@@ -144,33 +128,35 @@ class Classifier:
             f"Body snippet:\n{body}"
         )
 
-    async def _run(self, prompt: str, options: ClaudeAgentOptions) -> str:
-        """Run one stateless query; return the collected text (structured output preferred)."""
-        collected = ""
-        async with self._lock:
-            async for message in self._query(prompt=prompt, options=options):
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            collected += block.text
-                elif isinstance(message, ResultMessage):
-                    structured = getattr(message, "structured_output", None)
-                    if isinstance(structured, dict) and structured:
-                        collected = json.dumps(structured)
-                    elif message.result:
-                        collected = message.result
-        return collected
+    def _classify_system_prompt(
+        self,
+        *,
+        age: int,
+        policy: str,
+        approved_topics: tuple[str, ...],
+        disallowed_topics: tuple[str, ...],
+    ) -> str:
+        """Assemble the page-classification system prompt (provider-agnostic)."""
+        return (
+            _instructions(age)
+            + rubric(age)
+            + policy
+            + _approved_block(approved_topics)
+            + _disallowed_block(disallowed_topics)
+        )
 
     async def generate(
         self, *, system_prompt: str, user_prompt: str, model: str | None = None
     ) -> str:
         """Run one stateless prose generation (no rubric/policy/topic injection).
 
-        Returns the collected text. Unlike ``classify`` this does NOT fail open: transport errors
+        Returns the collected text. Unlike ``classify`` this does NOT fail open: backend errors
         propagate so the caller (the suggest-block-rule endpoint) can surface them as a 502.
         ``model`` overrides the configured classifier model (the Agent chat uses a stronger one).
         """
-        return await self._run(user_prompt, self._base_options(system_prompt, model=model))
+        return await self._backend.complete(
+            system_prompt=system_prompt, user_prompt=user_prompt, model=model
+        )
 
     async def classify(
         self,
@@ -184,15 +170,19 @@ class Classifier:
     ) -> Verdict:
         # Vision is gated behind a verified-off flag; until confirmed, screenshots are ignored
         # and the page falls back to text classification (the service then fails open).
-        options = self._options(
+        system_prompt = self._classify_system_prompt(
             age=age,
             policy=policy,
             approved_topics=approved_topics,
             disallowed_topics=disallowed_topics,
         )
         try:
-            collected = await self._run(self.build_prompt(payload), options)
-        except Exception as exc:  # noqa: BLE001 - fail-open on any SDK/transport error
+            collected = await self._backend.complete(
+                system_prompt=system_prompt,
+                user_prompt=self.build_prompt(payload),
+                model=None,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail-open on any backend error
             return allow(f"classifier_error: {type(exc).__name__}")
         return parse_verdict(collected)
 
@@ -205,11 +195,12 @@ class Classifier:
         ``allow``, since a bare query carries no page or image to escalate to.
         """
         try:
-            collected = await self._run(
-                f"Search query: {query[:500]}",
-                self._base_options(_search_instructions(age) + policy),
+            collected = await self._backend.complete(
+                system_prompt=_search_instructions(age) + policy,
+                user_prompt=f"Search query: {query[:500]}",
+                model=None,
             )
-        except Exception as exc:  # noqa: BLE001 - fail-open on any SDK/transport error
+        except Exception as exc:  # noqa: BLE001 - fail-open on any backend error
             return allow(f"classifier_error: {type(exc).__name__}")
         verdict = parse_verdict(collected)
         if verdict.verdict == "block":

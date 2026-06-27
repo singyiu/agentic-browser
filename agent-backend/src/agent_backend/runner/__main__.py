@@ -29,8 +29,11 @@ def main() -> None:
 
     load_dotenv()
 
+    # CLAUDE_CONFIG_DIR isolates the Claude CLI's config; Codex uses CODEX_HOME instead, so the
+    # check applies only to the claude provider (the default when AEGIS_AI_PROVIDER is unset).
+    provider = (os.environ.get("AEGIS_AI_PROVIDER") or "claude").strip().lower()
     config_dir = (os.environ.get("CLAUDE_CONFIG_DIR") or "").strip()
-    if not config_dir:
+    if provider != "codex" and not config_dir:
         print(
             "CLAUDE_CONFIG_DIR is not set. "
             "Run via scripts/run-agent.sh (it sets the isolated config dir).",

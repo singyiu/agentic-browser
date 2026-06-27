@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
 import agent_backend.runner.agent as agent_mod
 from agent_backend.config import RunnerConfig
@@ -75,3 +75,19 @@ async def test_run_task_emits_error_event(monkeypatch) -> None:
     events: list[str] = []
     await run_task("task", _config(), "/tmp/cfg", on_event=events.append)
     assert any("[error]" in e for e in events)
+
+
+async def test_run_task_emits_tool_use_event(monkeypatch) -> None:
+    tool = object.__new__(ToolUseBlock)
+    tool.name = "mcp__browser__browser_click"  # type: ignore[attr-defined]
+    tool.input = {"selector": "a"}  # type: ignore[attr-defined]
+
+    async def fake_query(*, prompt: str, options: object, transport: object = None):
+        yield _assistant(tool)
+        yield _result("done")
+
+    monkeypatch.setattr(agent_mod, "query", fake_query)
+
+    events: list[str] = []
+    await run_task("task", _config(), "/tmp/cfg", on_event=events.append)
+    assert any("[tool]" in e and "browser_click" in e for e in events)
