@@ -34,3 +34,5 @@ observability/.env
 
 # superpowers brainstorm / visual-companion scratch artifacts (local only)
 .superpowers/
+
+AGENTS.md
