@@ -116,9 +116,21 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
         endpoint = f"http://{lan_ip or config.host}:{config.port}"
         try:
             await deps.packer(runtime.name, token, endpoint)
-        except Exception:  # noqa: BLE001 — any packing failure is a controlled 500, never the token
+        except Exception:  # noqa: BLE001 — packing the kid CRX is macOS-only and may be
+            # unavailable on this guardian host (e.g. a Linux parent box). Don't lose the
+            # just-created profile: return its token + config so the parent can set the kid
+            # browser up by hand, and flag that the locked-browser package was not built.
+            event_log.log("kid_enrolled", profile=runtime.name)  # never the token
             return JSONResponse(
-                {"error": "could not build the kid browser package"}, status_code=500
+                {
+                    "profile": runtime.name,
+                    "name": runtime.name,
+                    "endpoint": endpoint,
+                    "token": token,
+                    "config": {"token": token, "endpoint": endpoint},
+                    "packaged": False,
+                },
+                status_code=201,
             )
         event_log.log("kid_enrolled", profile=runtime.name)  # never the token
         return JSONResponse(
@@ -127,6 +139,7 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
                 "endpoint": endpoint,
                 "setup_url": f"{endpoint}/enroll/{runtime.name}",
                 "update_url": f"{endpoint}/ext/{runtime.name}/updates.xml",
+                "packaged": True,
             },
             status_code=201,
         )

@@ -239,7 +239,11 @@
     }
     if (r.status === 201) {
       input.value = "";
-      showEnrollReveal(await r.json());
+      const created = await r.json();
+      // When the guardian can't build the locked-browser package (e.g. a non-macOS guardian
+      // host), it still creates the profile and returns the token + config to set up by hand.
+      if (created.packaged === false) showTokenReveal(created);
+      else showEnrollReveal(created);
       loadProfiles();
       return;
     }

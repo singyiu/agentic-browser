@@ -3126,6 +3126,7 @@ def test_enroll_creates_profile_and_packs(tmp_path: Path) -> None:
     assert resp.status_code == 201
     body = resp.json()
     assert body["profile"] == "alex"
+    assert body["packaged"] is True
     assert body["setup_url"].endswith("/enroll/alex")
     assert body["update_url"].endswith("/ext/alex/updates.xml")
     assert "token" not in body  # the token is baked into the CRX, never returned in the clear
@@ -3161,14 +3162,24 @@ def test_enroll_bad_name_422(tmp_path: Path) -> None:
     assert resp.status_code == 422
 
 
-def test_enroll_packer_failure_500(tmp_path: Path) -> None:
+def test_enroll_packer_failure_still_creates_profile(tmp_path: Path) -> None:
+    # Packing the kid CRX is macOS-only and may be unavailable on this guardian host (e.g. a
+    # Linux parent box). A packing failure must NOT lose the created profile: the request
+    # succeeds, returns the kid's token + config so the parent can configure the browser by
+    # hand, and flags that the locked-browser package was not built.
     async def boom(profile: str, token: str, endpoint: str) -> None:
         raise RuntimeError("pack failed")
 
-    resp = _enroll_client(tmp_path, packer=boom).post(
-        "/enroll", json={"name": "alex"}, headers=_PIN
-    )
-    assert resp.status_code == 500
+    client = _enroll_client(tmp_path, packer=boom)
+    resp = client.post("/enroll", json={"name": "alex"}, headers=_PIN)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["profile"] == "alex"
+    assert body["packaged"] is False
+    assert body["token"]  # token revealed so the kid browser can be configured by hand
+    assert body["config"]["token"] == body["token"]
+    listed = {p["name"] for p in client.get("/profiles", headers=_PIN).json()["profiles"]}
+    assert "alex" in listed  # the profile persisted despite the packing failure
 
 
 def test_enroll_download_serves_setup_command(tmp_path: Path) -> None:
