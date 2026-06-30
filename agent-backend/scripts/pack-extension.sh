@@ -115,7 +115,7 @@ sys.stdout.write(
 # --- pack (CRX3, signed with the stable key) ------------------------------------
 # --pack-extension writes "<BUILD_DIR>.crx" beside the build dir, then exits.
 "$CHROME" --pack-extension="$BUILD_DIR" --pack-extension-key="$PEM" \
-  --no-message-box >/dev/null 2>&1 || true
+  --no-sandbox --no-message-box >/dev/null 2>&1 || true
 if [ ! -f "$DIST_DIR/aegis-build.crx" ]; then
   echo "ERROR: pack failed — $DIST_DIR/aegis-build.crx was not produced." >&2
   exit 1
