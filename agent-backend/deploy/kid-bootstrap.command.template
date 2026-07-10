@@ -6,9 +6,9 @@
 # and enter this Mac's password once when asked.
 #
 # What it does:
-#   1. Downloads the Aegis browser from your guardian Mac and installs it to /Applications.
-#   2. Locks it to the parental-control extension via a managed-preferences policy (needs the
-#      Mac password — that's the one administrator step).
+#   1. Downloads the Aegis browser from your guardian Mac and installs it to /Applications
+#      (needs the Mac password; installing as root also means the kid can't delete it).
+#   2. Locks it to the parental-control extension via a managed-preferences policy.
 #   3. Launches it. From then on it reports to the guardian and enforces your rules.
 #
 # This file is safe to re-run (e.g. to repair the install).
@@ -77,12 +77,37 @@ else
 fi
 
 # --- 3. Install ----------------------------------------------------------------
-step 3 "Installing to $APPS_DIR/$APP_NAME"
-rm -rf "$APPS_DIR/$APP_NAME"
-ditto -x -k "$TMP_ZIP" "$APPS_DIR" || die "Could not unpack the browser into $APPS_DIR."
+step 3 "Installing to $APPS_DIR/$APP_NAME (enter this Mac's password if asked)"
+# Install as root: works even when this account can't write /Applications, and a root-owned
+# app is one the kid (a standard user) can't delete or swap out.
+sudo rm -rf "$APPS_DIR/$APP_NAME" || die "Could not remove the previous install."
+# Two extractors, judged by the RESULT (a runnable app bundle), not by either tool's exit code:
+#   - ditto is fastest and restores symlinks, but when the zip carries AppleDouble/__MACOSX
+#     sidecars, macOS 14+ refuses to restore the kernel-managed com.apple.provenance xattr and
+#     ditto aborts ("Operation not permitted").
+#   - unzip ignores that metadata (the app needs none — signatures live in the binaries) but
+#     returns a NON-ZERO exit on benign warnings even when every file extracted, so its exit
+#     status is not a reliable success signal — earlier this aborted a good install here.
+# So: capture both tools' output to a log, and decide success only from the extracted bundle.
+UNPACK_LOG="${TMPDIR:-/tmp}/aegis-unpack.log"; : >"$UNPACK_LOG"
+main_exe_path(){
+  local exe; exe="$(defaults read "$APPS_DIR/$APP_NAME/Contents/Info" CFBundleExecutable 2>/dev/null || echo Chromium)"
+  printf '%s' "$APPS_DIR/$APP_NAME/Contents/MacOS/$exe"
+}
+app_ok(){ [ -d "$APPS_DIR/$APP_NAME" ] && [ -x "$(main_exe_path)" ]; }
+if ! sudo ditto -x -k "$TMP_ZIP" "$APPS_DIR" >>"$UNPACK_LOG" 2>&1 || ! app_ok; then
+  warn "ditto didn't cleanly unpack it — retrying with unzip."
+  sudo rm -rf "$APPS_DIR/$APP_NAME"
+  sudo unzip -qo "$TMP_ZIP" -d "$APPS_DIR" -x "__MACOSX/*" >>"$UNPACK_LOG" 2>&1 || true
+fi
 rm -f "$TMP_ZIP"
+if ! app_ok; then
+  tail -4 "$UNPACK_LOG" 2>/dev/null | while IFS= read -r line; do warn "unpack: $line"; done
+  die "Could not unpack the browser into $APPS_DIR. The download may be incomplete — ask the parent to re-publish it (release-chromium.sh)."
+fi
+MAIN_EXE="$(main_exe_path)"
 # Self-built browser → clear the download-quarantine flag so Gatekeeper allows it to launch.
-xattr -dr com.apple.quarantine "$APPS_DIR/$APP_NAME" 2>/dev/null || true
+sudo xattr -dr com.apple.quarantine "$APPS_DIR/$APP_NAME" 2>/dev/null || true
 ok "Installed."
 
 # --- 4. Lock it to the parental-control extension (needs the Mac password) -----

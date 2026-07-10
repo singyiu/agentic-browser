@@ -2,7 +2,8 @@
 # Package the locally-built Chromium.app into a distributable artifact the guardian serves to
 # kid Macs over the LAN. Run this once per browser build — a DEVELOPER/CI task, not something a
 # parent ever does. Produces, in the guardian's dist dir (served at /dist/*):
-#   browser.zip             the zipped Chromium.app (ditto, bundle-safe — preserves symlinks/xattrs)
+#   browser.zip             the zipped Chromium.app (ditto, bundle-safe — preserves symlinks;
+#                           deliberately NO xattr/__MACOSX sidecars, see the zipping step)
 #   chromium-manifest.json  {version, bundle_id, app_name, sha256, size} — kid installers verify this
 #
 # The kid bootstrapper downloads browser.zip, checks sha256 against the manifest, unzips into
@@ -52,6 +53,20 @@ BUNDLE_ID="$(read_plist CFBundleIdentifier)"; BUNDLE_ID="${BUNDLE_ID:-org.chromi
 APP_NAME="$(basename "$APP")"
 ok "App: $APP_NAME  version $VERSION  ($BUNDLE_ID)"
 
+# Refuse to publish a bundle that can never run. All of Chromium's code lives in the framework
+# binary (hundreds of MB); a tiny one means an incomplete build or a component build
+# (is_component_build=true), whose code sits in dylibs OUTSIDE the bundle — it unpacks fine on
+# the kid Mac but crashes at launch. Rebuild with is_component_build=false.
+FW_BIN=""
+for f in "$APP"/Contents/Frameworks/*.framework/Versions/*/*" Framework"; do
+  [ -f "$f" ] && FW_BIN="$f" && break
+done
+[ -n "$FW_BIN" ] || die "No framework binary inside $APP_NAME — incomplete build?"
+FW_MB=$(( $(stat -f%z "$FW_BIN") / 1048576 ))
+[ "$FW_MB" -ge 100 ] \
+  || die "Framework binary is only ${FW_MB} MB — incomplete or component build (code outside the bundle). Rebuild with is_component_build=false."
+ok "Framework binary looks complete (${FW_MB} MB)."
+
 if [ "$SIGN" = "1" ]; then
   echo "  Ad-hoc signing (this can take a minute)…"
   codesign --force --deep --sign - "$APP" || die "codesign failed."
@@ -66,7 +81,11 @@ fi
 mkdir -p "$DIST_DIR"
 echo "  Zipping $APP_NAME → browser.zip (this can take a minute)…"
 rm -f "$OUT_ZIP"
-ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT_ZIP" || die "ditto zip failed."
+# No --sequesterRsrc: it embeds AppleDouble (__MACOSX) sidecars carrying xattrs like
+# com.apple.provenance, which macOS 14+ refuses to restore — ditto -x on the kid Mac then
+# aborts with "Operation not permitted". The bundle needs no resource forks/xattrs
+# (signatures are embedded in the binaries), so ship a plain zip.
+ditto -c -k --keepParent "$APP" "$OUT_ZIP" || die "ditto zip failed."
 SHA="$(shasum -a 256 "$OUT_ZIP" | awk '{print $1}')"
 SIZE="$(stat -f%z "$OUT_ZIP" 2>/dev/null || wc -c <"$OUT_ZIP")"
 ok "Zipped ($((SIZE / 1048576)) MB), sha256 ${SHA:0:16}…"
