@@ -7,10 +7,11 @@ extension updater and the kid bootstrapper can't present a token).
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from ...config import ConfigError
@@ -66,10 +67,20 @@ def build_routes(deps: GuardianDeps) -> list[Route]:
     # Fixed filenames from the same dist dir as the extension; UNAUTHENTICATED on purpose: the
     # kid bootstrapper downloads the browser before it holds any token, and a browser binary is
     # not a secret. 404 until scripts/release-chromium.sh has published the artifacts.
+    # On a non-macOS guardian (which can't build/serve the macOS browser .app), the browser can
+    # be hosted off-box (e.g. a public GitHub release). AEGIS_BROWSER_DIST_URL is the base URL
+    # holding browser.zip + chromium-manifest.json; when set, redirect the kid installer there
+    # (its curl follows redirects). Unset = serve the local .chromium-dist artifacts as before.
+    browser_dist_url = os.environ.get("AEGIS_BROWSER_DIST_URL", "").strip().rstrip("/")
+
     async def dist_manifest(_request: Request) -> Response:
+        if browser_dist_url:
+            return RedirectResponse(f"{browser_dist_url}/chromium-manifest.json", status_code=302)
         return _ext_artifact("chromium-manifest.json", "application/json")
 
     async def dist_browser(_request: Request) -> Response:
+        if browser_dist_url:
+            return RedirectResponse(f"{browser_dist_url}/browser.zip", status_code=302)
         return _ext_artifact("browser.zip", "application/zip")
 
     def _serve_repo_script(filename: str) -> Response:

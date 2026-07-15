@@ -6,6 +6,7 @@ import asyncio
 import functools
 import hashlib
 import json
+import os
 import platform
 import re
 import socket
@@ -688,22 +689,29 @@ def create_app(
     async def _default_pack_profile_crx(profile: str, token: str, endpoint: str) -> None:
         out_dir = str(Path(config.ext_dist_dir) / profile)
         script = _REPO_ROOT / "agent-backend" / "scripts" / "pack-extension.sh"
+        argv = [
+            "bash",
+            str(script),
+            "--profile",
+            profile,
+            "--token",
+            token,
+            "--endpoint",
+            endpoint,
+            "--out",
+            out_dir,
+        ]
+        # On a non-macOS guardian, pack with a local Chromium (e.g. Playwright's) instead of the
+        # script's default macOS build path. AEGIS_PACK_CHROMIUM points at that binary; unset =
+        # use the script default (the built macOS Chromium).
+        pack_chromium = os.environ.get("AEGIS_PACK_CHROMIUM", "").strip()
+        if pack_chromium:
+            argv += ["--chromium", pack_chromium]
         await asyncio.get_running_loop().run_in_executor(
             None,
             functools.partial(
                 subprocess.run,
-                [
-                    "bash",
-                    str(script),
-                    "--profile",
-                    profile,
-                    "--token",
-                    token,
-                    "--endpoint",
-                    endpoint,
-                    "--out",
-                    out_dir,
-                ],
+                argv,
                 check=True,
                 capture_output=True,
                 timeout=120,
