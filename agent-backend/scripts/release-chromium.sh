@@ -84,10 +84,38 @@ ok "Wrote manifest → $OUT_MANIFEST"
 
 if [ -n "$PUBLISH_TAG" ]; then
   command -v gh >/dev/null 2>&1 || die "--publish needs the GitHub CLI (gh)."
-  gh release create "$PUBLISH_TAG" "$OUT_ZIP" "$OUT_MANIFEST" \
-       --title "Aegis browser $VERSION" --notes "Chromium $VERSION" 2>/dev/null \
-    || gh release upload "$PUBLISH_TAG" "$OUT_ZIP" "$OUT_MANIFEST" --clobber
-  ok "Published to GitHub release $PUBLISH_TAG."
+
+  # Pin the release to the repo this checkout actually pushes to, and authenticate as the account
+  # that owns it. The ambient `gh` login may be a different identity with no access to this repo
+  # (→ "Could not resolve to a Repository"), so derive the slug from origin and reuse the token git
+  # already has for that owner (via the configured credential helper) when it differs from gh's.
+  REMOTE_URL="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)"
+  [ -n "$REMOTE_URL" ] || die "no 'origin' remote found in $REPO_ROOT — can't determine the release repo."
+  REPO_SLUG="$(printf '%s' "$REMOTE_URL" | sed -E 's#^(https://|git@)?github\.com[:/]+##; s#/*\.git$##; s#/+$##')"
+  case "$REPO_SLUG" in
+    */*) : ;;
+    *) die "could not parse owner/repo from origin URL: $REMOTE_URL" ;;
+  esac
+  REPO_OWNER="${REPO_SLUG%%/*}"
+
+  # If the active gh account can already see the repo, use it as-is; otherwise fall back to the
+  # owner's git credential token. gh() runs gh with that token only when one is needed (an empty
+  # GH_TOKEN would shadow gh's own keyring login).
+  if gh repo view "$REPO_SLUG" >/dev/null 2>&1; then
+    gh_pub() { gh "$@"; }
+  else
+    PUBLISH_TOKEN="$(printf 'protocol=https\nhost=github.com\nusername=%s\n' "$REPO_OWNER" \
+                       | git -C "$REPO_ROOT" credential fill 2>/dev/null | sed -n 's/^password=//p')"
+    [ -n "$PUBLISH_TOKEN" ] || die "gh account can't access $REPO_SLUG and no stored credential found for '$REPO_OWNER'. Run 'gh auth login' as that account or add its token."
+    gh_pub() { GH_TOKEN="$PUBLISH_TOKEN" gh "$@"; }
+  fi
+
+  gh_pub release create "$PUBLISH_TAG" "$OUT_ZIP" "$OUT_MANIFEST" \
+       --repo "$REPO_SLUG" --title "Aegis browser $VERSION" --notes "Chromium $VERSION" 2>/dev/null \
+    || gh_pub release upload "$PUBLISH_TAG" "$OUT_ZIP" "$OUT_MANIFEST" \
+         --repo "$REPO_SLUG" --clobber \
+    || die "gh release publish to $REPO_SLUG failed."
+  ok "Published to GitHub release $PUBLISH_TAG on $REPO_SLUG."
 fi
 
 printf '\n\033[1m✓ Browser published.\033[0m The guardian serves it at /dist/browser.zip + /dist/manifest.json.\n'
